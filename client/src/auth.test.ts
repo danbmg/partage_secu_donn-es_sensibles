@@ -12,6 +12,8 @@ describe('browser account flow', () => {
         const url = String(input);
         if (url === '/api/register') {
           registration = JSON.parse(String(init?.body)) as Record<string, string>;
+          expect(registration).not.toHaveProperty('masterPassword');
+          expect(registration).not.toHaveProperty('password');
           return Response.json({ userId: 'user-1' }, { status: 201 });
         }
         if (url.startsWith('/api/auth/salt')) {
