@@ -2,6 +2,7 @@ import express from 'express';
 import type Database from 'better-sqlite3';
 import { openDatabase } from './db.js';
 import { authRoutes } from './routes/auth.js';
+import { itemRoutes } from './routes/items.js';
 
 export function createApp(database: Database.Database): express.Express {
   const app = express();
@@ -11,6 +12,7 @@ export function createApp(database: Database.Database): express.Express {
     response.status(200).json({ status: 'ok' });
   });
   app.use('/api', authRoutes(database));
+  app.use('/api/items', itemRoutes(database));
 
   app.use((error: unknown, _request: express.Request, response: express.Response, next: express.NextFunction) => {
     void next;
