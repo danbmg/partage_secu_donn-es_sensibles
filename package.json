@@ -13,7 +13,8 @@
     "start": "node dist/server/index.js",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "check:types": "tsc --noEmit"
   },
   "dependencies": {
     "better-sqlite3": "^13.1.1",
