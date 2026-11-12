@@ -25,3 +25,13 @@ nanotekspice
 Nts/file/
 rom.bin
 G-OOP-400_nanotekspice/
+
+# Node, Vite, test and local database output
+node_modules
+dist/
+coverage/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.env
+.DS_Store
