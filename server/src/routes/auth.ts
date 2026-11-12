@@ -61,7 +61,8 @@ export function authRoutes(database: Database.Database): Router {
 
   router.post('/register', (request: Request, response: Response) => {
     const email = normalizeEmail(request.body?.email);
-    const body = request.body ?? {};
+    const body =
+      typeof request.body === 'object' && request.body !== null && !Array.isArray(request.body) ? request.body : {};
     const { salt, authHash, publicKey, encryptedPrivateKey } = body;
     if (
       !email ||
@@ -100,7 +101,8 @@ export function authRoutes(database: Database.Database): Router {
 
   router.post('/login', (request: Request, response: Response) => {
     const email = normalizeEmail(request.body?.email);
-    const body = request.body ?? {};
+    const body =
+      typeof request.body === 'object' && request.body !== null && !Array.isArray(request.body) ? request.body : {};
     const { authHash } = body;
     if (!email || !validBase64(authHash, 32)) {
       response.status(400).json({ error: 'Invalid login data' });

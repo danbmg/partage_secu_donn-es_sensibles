@@ -1,9 +1,11 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 const SESSION_SECONDS = 8 * 60 * 60;
-const sessionSecret = process.env.SESSION_SECRET
-  ? Buffer.from(process.env.SESSION_SECRET, 'utf8')
-  : randomBytes(32);
+const configuredSecret = process.env.SESSION_SECRET;
+if (configuredSecret && Buffer.byteLength(configuredSecret, 'utf8') < 32) {
+  throw new Error('SESSION_SECRET must contain at least 32 bytes');
+}
+const sessionSecret = configuredSecret ? Buffer.from(configuredSecret, 'utf8') : randomBytes(32);
 
 function encode(value: object): string {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
