@@ -44,5 +44,6 @@ describe('audit log in the browser', () => {
     });
     expect(describeAuditEntry(entry({ action: 'delete', itemId: null }), 'me', names).detail).toBe('élément supprimé');
     expect(describeAuditEntry(entry({ action: 'login', itemId: null }), 'me', names).detail).toBe('');
+    expect(describeAuditEntry(entry({ action: 'logout', itemId: null }), 'me', names)).toEqual({ label: 'Déconnexion', detail: '', actor: 'vous' });
   });
 });
