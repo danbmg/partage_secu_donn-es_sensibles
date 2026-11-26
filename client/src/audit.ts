@@ -1,7 +1,7 @@
 import type { AuthenticatedSession } from './auth.js';
 import { apiRequest } from './http.js';
 
-export type AuditAction = 'login' | 'create' | 'read' | 'update' | 'delete' | 'share';
+export type AuditAction = 'login' | 'logout' | 'create' | 'read' | 'update' | 'delete' | 'share';
 
 export interface AuditEntry {
   id: number;
@@ -19,8 +19,12 @@ export interface AuditLine {
   actor: string;
 }
 
+// Actions about the account itself: they never point to an item.
+const ACCOUNT_ACTIONS: ReadonlySet<AuditAction> = new Set<AuditAction>(['login', 'logout']);
+
 const ACTION_LABELS: Record<AuditAction, string> = {
   login: 'Connexion',
+  logout: 'Déconnexion',
   create: 'Création',
   read: 'Lecture',
   update: 'Modification',
@@ -50,7 +54,7 @@ export function describeAuditEntry(
   if (entry.itemId) {
     const name = itemNames.get(entry.itemId);
     detail = name ? `« ${name} »` : 'élément inaccessible';
-  } else if (entry.action !== 'login') {
+  } else if (!ACCOUNT_ACTIONS.has(entry.action)) {
     detail = 'élément supprimé';
   }
   if (entry.targetEmail) detail += ` avec ${entry.targetEmail}`;
