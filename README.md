@@ -29,12 +29,14 @@ npm run build
 
 ## Flux disponibles
 
-1. `registerAccount()` crée le sel, le dérivé d'authentification et la paire RSA dans le navigateur. Le serveur conserve le dérivé re-haché avec scrypt, la clé publique et la clé privée chiffrée.
+1. `registerAccount()` crée le sel, le dérivé d'authentification, la paire RSA et une **clé de secours** dans le navigateur. Le serveur conserve le dérivé re-haché avec scrypt, la clé publique, la clé privée chiffrée par le mot de passe maître, et une seconde copie de la clé privée chiffrée par la clé de secours. La clé de secours est affichée une seule fois et n'est jamais envoyée.
 2. `loginAccount()` récupère le sel public, prouve le mot de passe avec le dérivé et déchiffre la clé privée uniquement en mémoire côté client.
 3. `createVaultItem()` chiffre le contenu avec une clé AES-256-GCM unique, puis enveloppe cette clé avec la clé publique du propriétaire.
 4. `shareVaultItem()` enveloppe la même clé d'élément avec la clé publique du destinataire. Le destinataire peut alors lire le ciphertext avec sa clé privée.
 5. `logoutAccount()` demande au serveur d'oublier la session : le jeton devient inutilisable immédiatement, même s'il a été copié. Si une requête renvoie 401 alors que l'utilisateur est connecté (session fermée ailleurs ou expirée), l'interface revient à l'écran de connexion.
-6. `readAuditLog()` récupère le journal d'activité : les actions de l'utilisateur et toute action d'un tiers sur un élément dont il est propriétaire (lecture, partage). Le serveur ne connaît que des identifiants d'éléments ; le navigateur les remplace par les noms déchiffrés.
+6. `recoverAccount()` (mot de passe oublié) : la clé de secours prouve l'identité (`/api/recovery/key`), déchiffre la clé privée dans le navigateur, qui la rechiffre sous le nouveau mot de passe. La réinitialisation (`/api/recovery/reset`) remplace aussi la clé de secours utilisée par une nouvelle et ferme toutes les sessions du compte.
+7. `regenerateRecoveryKey()` remplace la clé de secours d'un utilisateur connecté (clé perdue, ou compte créé avant la récupération). Le serveur exige en plus de la session la preuve du mot de passe maître : un jeton volé ne suffit pas à poser sa propre clé de secours.
+8. `readAuditLog()` récupère le journal d'activité : les actions de l'utilisateur et toute action d'un tiers sur un élément dont il est propriétaire (lecture, partage). Le serveur ne connaît que des identifiants d'éléments ; le navigateur les remplace par les noms déchiffrés.
 
 ## Routes de l'API
 
@@ -46,6 +48,9 @@ npm run build
 | POST | `/api/register` | non | création de compte (dérivé d'authentification, clé publique, clé privée chiffrée) |
 | POST | `/api/login` | non | preuve du mot de passe → jeton de session et clé privée chiffrée |
 | POST | `/api/logout` | oui | ferme la session courante (les autres appareils restent connectés) |
+| POST | `/api/recovery/key` | non | preuve de la clé de secours → clé privée chiffrée par la clé de secours |
+| POST | `/api/recovery/reset` | non | preuve de la clé de secours → nouveau mot de passe, nouvelle clé de secours, sessions fermées |
+| PUT | `/api/account/recovery` | oui + preuve du mot de passe | nouvelle clé de secours |
 | GET | `/api/items` | oui | éléments accessibles (ciphertext + clé enveloppée pour l'appelant) |
 | POST | `/api/items` | oui | création d'un élément chiffré |
 | GET/PUT/DELETE | `/api/items/:id` | oui | lecture, remplacement du ciphertext, suppression (propriétaire) |
@@ -60,4 +65,10 @@ Les jetons de session sont signés (HMAC-SHA-256) **et** enregistrés dans la ta
 
 Le journal d'audit est écrit uniquement par `recordAudit()` (`server/src/audit.ts`), qui porte la liste des actions autorisées. Une lecture est journalisée par élément renvoyé, pour qu'un propriétaire voie qui a consulté ses secrets.
 
-Les interfaces de récupération de compte, de révocation et de rotation de clés restent à réaliser dans les tâches suivantes.
+## Clé de secours : pourquoi ce n'est pas une porte dérobée
+
+La clé de secours fait 160 bits aléatoires, affichés en 8 groupes de 4 caractères base32. Elle est générée et utilisée uniquement dans le navigateur ; le serveur ne stocke qu'un dérivé re-haché (pour vérifier une preuve) et une copie de la clé privée qu'elle chiffre. Sans elle ni le mot de passe, personne — administrateur compris — ne peut rouvrir le coffre. Elle est dérivée avec HKDF plutôt que PBKDF2 : n'étant pas choisie par un humain, il n'y a pas de dictionnaire à ralentir.
+
+Limite assumée : si l'utilisateur perd à la fois son mot de passe maître et sa clé de secours, ses données sont perdues. C'est le prix du modèle zero-knowledge.
+
+Les interfaces de révocation et de rotation de clés restent à réaliser dans les tâches suivantes.
