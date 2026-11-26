@@ -10,7 +10,8 @@ export type AuditAction =
   | 'read'
   | 'update'
   | 'delete'
-  | 'share';
+  | 'share'
+  | 'revoke';
 
 export interface AuditEntry {
   id: number;
@@ -41,6 +42,7 @@ const ACTION_LABELS: Record<AuditAction, string> = {
   update: 'Modification',
   delete: 'Suppression',
   share: 'Partage',
+  revoke: 'Retrait d’accès',
 };
 
 export async function readAuditLog(session: AuthenticatedSession): Promise<AuditEntry[]> {
@@ -68,6 +70,6 @@ export function describeAuditEntry(
   } else if (!ACCOUNT_ACTIONS.has(entry.action)) {
     detail = 'élément supprimé';
   }
-  if (entry.targetEmail) detail += ` avec ${entry.targetEmail}`;
+  if (entry.targetEmail) detail += ` ${entry.action === 'revoke' ? 'pour' : 'avec'} ${entry.targetEmail}`;
   return { label: ACTION_LABELS[entry.action] ?? entry.action, detail: detail.trim(), actor };
 }

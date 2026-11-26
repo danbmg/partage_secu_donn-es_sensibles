@@ -3,7 +3,7 @@ import { describeAuditEntry, readAuditLog, visibleAuditEntries, type AuditEntry 
 import { loginAccount, logoutAccount, registerAccount, type AuthenticatedSession } from './auth.js';
 import { ApiError } from './http.js';
 import { recoverAccount, regenerateRecoveryKey } from './recovery.js';
-import { shareVaultItem, listItemAccess, type ItemAccess } from './sharing.js';
+import { listItemAccess, revokeVaultItemAccess, shareVaultItem, type ItemAccess } from './sharing.js';
 import { createVaultItem, readVaultItems, type VaultItem } from './vault.js';
 
 const root = document.querySelector<HTMLDivElement>('#app');
@@ -62,6 +62,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   'Recipient not found': 'Aucun compte ne correspond à ce destinataire.',
   'Item is already shared with this user': 'Ce secret est déjà partagé avec cette personne.',
   'Cannot share an item with yourself': 'Vous avez déjà accès à ce secret.',
+  'The access list changed, reload and try again': 'La liste des accès a changé entre-temps : actualisez puis recommencez.',
 };
 
 // A 401 while logged in means the server no longer knows this session
@@ -147,7 +148,11 @@ function renderItem(item: VaultItem): string {
             <label for="recipient-${escapeHtml(item.id)}">Partager avec</label>
             <div class="inline-form"><input id="recipient-${escapeHtml(item.id)}" name="email" type="email" placeholder="destinataire@exemple.fr" required /><button type="submit" class="button button-secondary" ${busy ? 'disabled' : ''}>Partager</button></div>
           </form>
-          <p class="shared-list">${sharedUsers.length ? `Partagé avec ${sharedUsers.map((access) => escapeHtml(access.email)).join(', ')}` : 'Pas encore partagé'}</p>
+          ${sharedUsers.length ? `
+          <ul class="access-list" aria-label="Personnes ayant accès">
+            ${sharedUsers.map((access) => `
+              <li><span>${escapeHtml(access.email)}</span><button type="button" class="text-button danger" data-action="revoke" data-item-id="${escapeHtml(item.id)}" data-user-id="${escapeHtml(access.userId)}" data-email="${escapeHtml(access.email)}" ${busy ? 'disabled' : ''}>Retirer l’accès</button></li>`).join('')}
+          </ul>` : '<p class="shared-list">Pas encore partagé</p>'}
         </div>` : ''}
     </article>`;
 }
@@ -307,6 +312,20 @@ app.addEventListener('click', async (event) => {
     pendingRecoveryKey = null;
     notice = '';
     render();
+  } else if (action === 'revoke' && session) {
+    const { itemId, userId, email } = button.dataset;
+    if (!itemId || !userId) return;
+    busy = true;
+    notice = '';
+    render();
+    try {
+      await revokeVaultItemAccess(itemId, userId, session);
+      busy = false;
+      await refreshAfterChange(`Accès retiré à ${email ?? 'ce destinataire'}. Le secret a été rechiffré avec une nouvelle clé.`);
+    } catch (error) {
+      busy = false;
+      showError(error, 'Le retrait d’accès a échoué.');
+    }
   } else if (action === 'logout') {
     const current = session;
     const serverConfirmed = current

@@ -10,6 +10,7 @@ export const AUDIT_ACTIONS = [
   'update',
   'delete',
   'share',
+  'revoke',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 

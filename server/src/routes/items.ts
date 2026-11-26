@@ -34,6 +34,23 @@ function validWrappedKey(value: unknown): value is string {
   return decoded.length >= 256 && decoded.length <= 1024 && decoded.toString('base64') === value;
 }
 
+interface WrappedKeyEntry {
+  userId: string;
+  wrappedKey: string;
+}
+
+function validWrappedKeyList(value: unknown): value is WrappedKeyEntry[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 500) return false;
+  const seen = new Set<string>();
+  for (const entry of value as unknown[]) {
+    if (typeof entry !== 'object' || entry === null) return false;
+    const { userId, wrappedKey } = entry as Record<string, unknown>;
+    if (typeof userId !== 'string' || seen.has(userId) || !validWrappedKey(wrappedKey)) return false;
+    seen.add(userId);
+  }
+  return true;
+}
+
 function serialize(row: ItemRow) {
   return {
     id: row.id,
@@ -139,12 +156,70 @@ export function itemRoutes(database: Database.Database): Router {
     }
     const users = database
       .prepare(
-        `SELECT u.id AS userId, u.email, k.created_at AS sharedAt
+        `SELECT u.id AS userId, u.email, u.public_key AS publicKey, k.created_at AS sharedAt
          FROM item_keys k JOIN users u ON u.id = k.user_id
-         WHERE k.item_id = ? ORDER BY k.created_at`,
+         WHERE k.item_id = ? ORDER BY k.created_at, k.rowid`,
       )
       .all(request.params.id);
     response.status(200).json({ users });
+  });
+
+  // Revocation = remove one access AND change the item key. The browser of the owner
+  // sends the item re-encrypted under a new key, wrapped for every remaining holder:
+  // a key the revoked user may have kept no longer opens anything.
+  router.delete('/:id/shares/:userId', (request: Request, response: Response) => {
+    const userId = requestUserId(database, request);
+    if (!userId) {
+      response.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    const { ciphertext, wrappedKeys } = request.body ?? {};
+    if (!validCiphertext(ciphertext) || !validWrappedKeyList(wrappedKeys)) {
+      response.status(400).json({ error: 'Invalid revocation data' });
+      return;
+    }
+    const itemId = String(request.params.id);
+    const revokedId = String(request.params.userId);
+
+    const revoke = database.transaction(() => {
+      const item = database.prepare('SELECT owner_id FROM items WHERE id = ? AND owner_id = ?').get(itemId, userId);
+      if (!item) return 'missing-item' as const;
+      if (revokedId === userId) return 'owner' as const;
+      const holders = (
+        database.prepare('SELECT user_id FROM item_keys WHERE item_id = ?').all(itemId) as Array<{ user_id: string }>
+      ).map((row) => row.user_id);
+      if (!holders.includes(revokedId)) return 'missing-access' as const;
+
+      // The new key must reach exactly the remaining holders: nobody forgotten
+      // (they would lose the item), nobody added through the back door.
+      const remaining = new Set(holders.filter((holder) => holder !== revokedId));
+      const provided = new Set(wrappedKeys.map((entry) => entry.userId));
+      if (remaining.size !== provided.size || [...remaining].some((holder) => !provided.has(holder))) {
+        return 'stale-access-list' as const;
+      }
+
+      database.prepare('DELETE FROM item_keys WHERE item_id = ? AND user_id = ?').run(itemId, revokedId);
+      database
+        .prepare("UPDATE items SET ciphertext = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?")
+        .run(ciphertext, itemId);
+      const updateKey = database.prepare('UPDATE item_keys SET wrapped_key = ? WHERE item_id = ? AND user_id = ?');
+      for (const entry of wrappedKeys) updateKey.run(entry.wrappedKey, itemId, entry.userId);
+      recordAudit(database, { userId, itemId, targetUserId: revokedId, action: 'revoke' });
+      return 'revoked' as const;
+    });
+
+    const result = revoke();
+    if (result === 'missing-item') {
+      response.status(404).json({ error: 'Item not found' });
+    } else if (result === 'owner') {
+      response.status(400).json({ error: 'The owner cannot revoke their own access' });
+    } else if (result === 'missing-access') {
+      response.status(404).json({ error: 'This user has no access to the item' });
+    } else if (result === 'stale-access-list') {
+      response.status(409).json({ error: 'The access list changed, reload and try again' });
+    } else {
+      response.status(204).end();
+    }
   });
 
   router.get('/', (request: Request, response: Response) => {
