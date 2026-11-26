@@ -35,3 +35,6 @@ coverage/
 *.sqlite-wal
 .env
 .DS_Store
+
+# Local demo notes (accounts and passwords used to present the project)
+demo.md
