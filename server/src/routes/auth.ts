@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import type Database from 'better-sqlite3';
+import { recordAudit } from '../audit.js';
 import { createSession } from '../auth/session.js';
 import { hashAuthenticationProof, verifyAuthenticationProof } from '../auth/password-proof.js';
 
@@ -121,7 +122,7 @@ export function authRoutes(database: Database.Database): Router {
       return;
     }
 
-    database.prepare("INSERT INTO audit_log (user_id, action) VALUES (?, 'login')").run(account.id);
+    recordAudit(database, { userId: account.id, action: 'login' });
     response.status(200).json({
       token: createSession(account.id),
       userId: account.id,

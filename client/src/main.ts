@@ -1,4 +1,5 @@
 import './style.css';
+import { describeAuditEntry, readAuditLog, visibleAuditEntries, type AuditEntry } from './audit.js';
 import { loginAccount, registerAccount, type AuthenticatedSession } from './auth.js';
 import { shareVaultItem, listItemAccess, type ItemAccess } from './sharing.js';
 import { createVaultItem, readVaultItems, type VaultItem } from './vault.js';
@@ -12,6 +13,7 @@ let accountEmail = '';
 let authMode: 'login' | 'register' = 'register';
 let items: VaultItem[] = [];
 let accessByItem = new Map<string, ItemAccess[]>();
+let auditEntries: AuditEntry[] = [];
 let notice = '';
 let noticeKind: 'success' | 'error' = 'success';
 let apiReady = false;
@@ -88,6 +90,29 @@ function renderItem(item: VaultItem): string {
     </article>`;
 }
 
+function renderAudit(): string {
+  if (!session) return '';
+  const userId = session.userId;
+  const itemNames = new Map(items.map((item) => [item.id, item.name]));
+  const entries = visibleAuditEntries(auditEntries, userId).slice(0, 30);
+  const timeFormat = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
+  const rows = entries.map((entry) => {
+    const line = describeAuditEntry(entry, userId, itemNames);
+    return `
+      <li class="audit-entry">
+        <span class="audit-action">${escapeHtml(line.label)}</span>
+        <span class="audit-detail">${escapeHtml(line.detail || '—')}</span>
+        <span class="audit-meta">par ${escapeHtml(line.actor)} · <time datetime="${escapeHtml(entry.createdAt)}">${escapeHtml(timeFormat.format(new Date(entry.createdAt)))}</time></span>
+      </li>`;
+  });
+  return `
+    <section class="audit-panel" aria-labelledby="audit-title">
+      <div class="items-heading"><div><span class="eyebrow">Traçabilité</span><h2 id="audit-title">Journal d’activité</h2></div></div>
+      ${rows.length ? `<ol class="audit-list">${rows.join('')}</ol>` : '<p class="audit-empty">Aucune activité pour le moment.</p>'}
+      <p class="audit-note">Vos propres lectures ne sont pas affichées. Les noms des secrets sont déchiffrés dans votre navigateur&nbsp;: le serveur ne voit que des identifiants.</p>
+    </section>`;
+}
+
 function renderVault(): string {
   if (!session) return renderAuth();
   return `
@@ -113,6 +138,7 @@ function renderVault(): string {
       <section class="items-panel" aria-labelledby="items-title">
         <div class="items-heading"><div><span class="eyebrow">Stockage chiffré</span><h2 id="items-title">Mon coffre <span class="count">${items.length}</span></h2></div><button class="button button-quiet" data-action="refresh" type="button" ${busy ? 'disabled' : ''}>Actualiser</button></div>
         ${items.length ? `<div class="secret-list">${items.map(renderItem).join('')}</div>` : `<div class="empty-state"><div class="empty-icon" aria-hidden="true">◇</div><h3>Votre coffre est vide</h3><p>Ajoutez un premier secret avec le formulaire.</p></div>`}
+        ${renderAudit()}
       </section>
     </section>`;
 }
@@ -148,6 +174,7 @@ async function loadItems(): Promise<void> {
     ownerItems.map(async (item) => [item.id, await listItemAccess(item.id, session as AuthenticatedSession)] as const),
   );
   accessByItem = new Map(accessEntries);
+  auditEntries = await readAuditLog(session);
 }
 
 async function refreshAfterChange(message: string): Promise<void> {
@@ -171,6 +198,7 @@ app.addEventListener('click', async (event) => {
     accountEmail = '';
     items = [];
     accessByItem.clear();
+    auditEntries = [];
     notice = 'Vous êtes déconnecté de cet appareil.';
     render();
   } else if (action === 'refresh') {
