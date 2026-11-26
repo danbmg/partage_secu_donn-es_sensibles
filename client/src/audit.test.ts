@@ -21,7 +21,7 @@ describe('audit log in the browser', () => {
     const fetchMock = vi.fn(async () => Response.json({ entries: [entry({})] }));
     vi.stubGlobal('fetch', fetchMock);
 
-    expect(await readAuditLog({ token: 'tok', userId: 'me', publicKey: '', privateKey: {} as CryptoKey })).toHaveLength(1);
+    expect(await readAuditLog({ token: 'tok', userId: 'me', publicKey: '', privateKey: {} as CryptoKey, salt: '', encryptedPrivateKey: '', hasRecoveryKey: true })).toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledWith('/api/audit', { headers: { Authorization: 'Bearer tok' } });
   });
 

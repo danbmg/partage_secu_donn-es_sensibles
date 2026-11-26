@@ -13,6 +13,9 @@ describe('client-side vault encryption', () => {
       userId: 'owner-1',
       publicKey: keyPair.publicKey,
       privateKey: await importRsaPrivateKey(keyPair.privateKey),
+      salt: '',
+      encryptedPrivateKey: '',
+      hasRecoveryKey: true,
     };
     let stored: Record<string, string> | undefined;
     vi.stubGlobal(
