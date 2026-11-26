@@ -14,6 +14,8 @@ import {
   generateRsaKeyPair,
   importAesKey,
   importRsaPrivateKey,
+  keyPairMatches,
+  publicKeyFingerprint,
   unwrapItemKey,
   wrapItemKey,
 } from './index.js';
@@ -68,4 +70,19 @@ describe('client cryptography', () => {
     expect(await decryptText(envelope, await deriveRecoveryEncryptionKey(key))).toBe('pkcs8 private key');
     await expect(decryptText(envelope, await deriveRecoveryEncryptionKey(createRecoveryKey()))).rejects.toThrow();
   });
+
+  it('gives every public key a stable, readable fingerprint', async () => {
+    const [first, second] = await Promise.all([generateRsaKeyPair(), generateRsaKeyPair()]);
+    const fingerprint = await publicKeyFingerprint(first.publicKey);
+    expect(fingerprint).toMatch(/^([0-9A-F]{4} ){7}[0-9A-F]{4}$/);
+    expect(await publicKeyFingerprint(first.publicKey)).toBe(fingerprint);
+    expect(await publicKeyFingerprint(second.publicKey)).not.toBe(fingerprint);
+  }, 30_000);
+
+  it('tells whether a public key belongs to a private key', async () => {
+    const [mine, other] = await Promise.all([generateRsaKeyPair(), generateRsaKeyPair()]);
+    const privateKey = await importRsaPrivateKey(mine.privateKey);
+    expect(await keyPairMatches(mine.publicKey, privateKey)).toBe(true);
+    expect(await keyPairMatches(other.publicKey, privateKey)).toBe(false);
+  }, 30_000);
 });
