@@ -51,7 +51,7 @@ describe('account registration and login', () => {
     const response = await request(testApp).post('/api/login').send({ email: 'alice@example.com', authHash });
 
     expect(response.status).toBe(200);
-    expect(authenticatedUserId(`Bearer ${response.body.token}`)).toBe(response.body.userId);
+    expect(authenticatedUserId(database, `Bearer ${response.body.token}`)).toBe(response.body.userId);
     expect(response.body.encryptedPrivateKey).toBe(encryptedPrivateKey);
     expect(response.body.publicKey).toBe(publicKey);
     expect(database.prepare("SELECT action FROM audit_log").get()).toEqual({ action: 'login' });
@@ -68,6 +68,34 @@ describe('account registration and login', () => {
     expect(
       (await request(testApp).post('/api/login').send({ ...registration, masterPassword: 'not-sent' })).status,
     ).toBe(400);
+  }, 30_000);
+
+  it('invalidates the session on logout, even though its signature is still valid', async () => {
+    const { app: testApp, database } = newTestApp();
+    await request(testApp).post('/api/register').send({ email: 'alice@example.com', salt, authHash, publicKey, encryptedPrivateKey });
+    const first = (await request(testApp).post('/api/login').send({ email: 'alice@example.com', authHash })).body.token as string;
+    const second = (await request(testApp).post('/api/login').send({ email: 'alice@example.com', authHash })).body.token as string;
+
+    expect((await request(testApp).get('/api/items').set('Authorization', `Bearer ${first}`)).status).toBe(200);
+    expect((await request(testApp).post('/api/logout').set('Authorization', `Bearer ${first}`)).status).toBe(204);
+
+    expect((await request(testApp).get('/api/items').set('Authorization', `Bearer ${first}`)).status).toBe(401);
+    expect((await request(testApp).post('/api/logout').set('Authorization', `Bearer ${first}`)).status).toBe(401);
+    // Logging out one device leaves the other sessions alone.
+    expect((await request(testApp).get('/api/items').set('Authorization', `Bearer ${second}`)).status).toBe(200);
+    expect(database.prepare("SELECT action FROM audit_log WHERE action = 'logout'").all()).toHaveLength(1);
+  }, 30_000);
+
+  it('rejects tokens whose session row does not exist or was forged', async () => {
+    const { app: testApp, database } = newTestApp();
+    await request(testApp).post('/api/register').send({ email: 'alice@example.com', salt, authHash, publicKey, encryptedPrivateKey });
+    const token = (await request(testApp).post('/api/login').send({ email: 'alice@example.com', authHash })).body.token as string;
+    database.prepare('DELETE FROM sessions').run();
+    expect(authenticatedUserId(database, `Bearer ${token}`)).toBeNull();
+
+    const [header, payload] = token.split('.');
+    expect(authenticatedUserId(database, `Bearer ${header}.${payload}.forged-signature`)).toBeNull();
+    expect(authenticatedUserId(database, undefined)).toBeNull();
   }, 30_000);
 
   it('keeps the health endpoint available', async () => {

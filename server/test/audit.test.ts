@@ -17,9 +17,9 @@ function fixture() {
   return {
     app: createApp(database),
     database,
-    ownerToken: createSession('owner'),
-    otherToken: createSession('other'),
-    thirdToken: createSession('third'),
+    ownerToken: createSession(database, 'owner'),
+    otherToken: createSession(database, 'other'),
+    thirdToken: createSession(database, 'third'),
   };
 }
 

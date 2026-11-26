@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loginAccount, registerAccount } from './auth.js';
+import { loginAccount, logoutAccount, registerAccount } from './auth.js';
+import { ApiError } from './http.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -44,4 +45,21 @@ describe('browser account flow', () => {
     expect(session.publicKey).toBe(registration?.publicKey);
     expect(session.privateKey.algorithm.name).toBe('RSA-OAEP');
   }, 30_000);
+
+  it('asks the server to drop the session on logout and reports API errors with their status', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void input;
+      return (init?.headers as Record<string, string>).Authorization === 'Bearer live'
+        ? new Response(null, { status: 204 })
+        : Response.json({ error: 'Authentication required' }, { status: 401 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const session = { token: 'live', userId: 'u', publicKey: '', privateKey: {} as CryptoKey };
+
+    await expect(logoutAccount(session)).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith('/api/logout', { method: 'POST', headers: { Authorization: 'Bearer live' } });
+    const failure = await logoutAccount({ ...session, token: 'stale' }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({ status: 401, message: 'Authentication required' });
+  });
 });

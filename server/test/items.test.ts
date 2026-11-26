@@ -22,8 +22,8 @@ function fixture() {
   return {
     app,
     database,
-    ownerToken: createSession('owner'),
-    otherToken: createSession('other'),
+    ownerToken: createSession(database, 'owner'),
+    otherToken: createSession(database, 'other'),
   };
 }
 

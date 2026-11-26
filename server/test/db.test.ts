@@ -13,7 +13,7 @@ describe('SQLite schema', () => {
       .all()
       .map((row) => (row as { name: string }).name);
 
-    expect(tables).toEqual(['audit_log', 'item_keys', 'items', 'sqlite_sequence', 'users']);
+    expect(tables).toEqual(['audit_log', 'item_keys', 'items', 'sessions', 'sqlite_sequence', 'users']);
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
     expect(db.pragma('user_version', { simple: true })).toBe(schemaVersion);
     expect(db.prepare('PRAGMA table_info(items)').all()).toHaveLength(5);
