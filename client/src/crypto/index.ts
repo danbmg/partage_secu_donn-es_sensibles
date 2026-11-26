@@ -172,6 +172,27 @@ export async function unwrapItemKey(wrappedItemKey: string, privateKey: CryptoKe
   return new Uint8Array(raw);
 }
 
+// SHA-256 of the public key, first 128 bits, as 8 groups of 4 hex digits.
+// Two people reading it to each other (in person, by phone) can detect a server
+// that handed out a substituted key.
+export async function publicKeyFingerprint(publicKeyBase64: string): Promise<string> {
+  const digest = new Uint8Array(await cryptoApi().subtle.digest('SHA-256', bufferSource(fromBase64(publicKeyBase64))));
+  const hex = Array.from(digest.subarray(0, 16), (byte) => byte.toString(16).padStart(2, '0')).join('').toUpperCase();
+  return hex.match(/.{4}/g)?.join(' ') ?? hex;
+}
+
+// True when what the public key wraps, the private key unwraps: catches a server
+// that returns someone else's public key next to my encrypted private key.
+export async function keyPairMatches(publicKeyBase64: string, privateKey: CryptoKey): Promise<boolean> {
+  const probe = await createRandomItemKey();
+  try {
+    const unwrapped = await unwrapItemKey(await wrapItemKey(probe, publicKeyBase64), privateKey);
+    return unwrapped.length === probe.length && unwrapped.every((byte, index) => byte === probe[index]);
+  } catch {
+    return false;
+  }
+}
+
 interface AesEnvelope {
   iv: string;
   ciphertext: string;

@@ -1,6 +1,7 @@
 import './style.css';
 import { describeAuditEntry, readAuditLog, visibleAuditEntries, type AuditEntry } from './audit.js';
 import { loginAccount, logoutAccount, registerAccount, type AuthenticatedSession } from './auth.js';
+import { publicKeyFingerprint } from './crypto/index.js';
 import { ApiError } from './http.js';
 import { rotateAccountKeys } from './keys.js';
 import { recoverAccount, regenerateRecoveryKey } from './recovery.js';
@@ -19,6 +20,8 @@ let pendingRecoveryKey: string | null = null;
 let items: VaultItem[] = [];
 let accessByItem = new Map<string, ItemAccess[]>();
 let auditEntries: AuditEntry[] = [];
+// Public key (base64) -> fingerprint, computed once per key.
+const fingerprints = new Map<string, string>();
 let notice = '';
 let noticeKind: 'success' | 'error' = 'success';
 let apiReady = false;
@@ -65,6 +68,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   'Item is already shared with this user': 'Ce secret est déjà partagé avec cette personne.',
   'Cannot share an item with yourself': 'Vous avez déjà accès à ce secret.',
   'The access list changed, reload and try again': 'La liste des accès a changé entre-temps : actualisez puis recommencez.',
+  'A recipient changed keys, reload and try again': 'Un destinataire vient de renouveler ses clés : actualisez puis recommencez.',
+  'Public key does not match private key': 'La clé publique fournie par le serveur ne correspond pas à votre clé privée : connexion refusée.',
   'Your item list changed, reload and try again': 'Un secret vient d’être partagé avec vous : actualisez puis recommencez.',
 };
 
@@ -154,7 +159,7 @@ function renderItem(item: VaultItem): string {
           ${sharedUsers.length ? `
           <ul class="access-list" aria-label="Personnes ayant accès">
             ${sharedUsers.map((access) => `
-              <li><span>${escapeHtml(access.email)}</span><button type="button" class="text-button danger" data-action="revoke" data-item-id="${escapeHtml(item.id)}" data-user-id="${escapeHtml(access.userId)}" data-email="${escapeHtml(access.email)}" ${busy ? 'disabled' : ''}>Retirer l’accès</button></li>`).join('')}
+              <li><span class="access-who">${escapeHtml(access.email)}${access.publicKey && fingerprints.has(access.publicKey) ? `<code class="fingerprint" title="Empreinte de sa clé publique">${escapeHtml(fingerprints.get(access.publicKey) ?? '')}</code>` : ''}</span><button type="button" class="text-button danger" data-action="revoke" data-item-id="${escapeHtml(item.id)}" data-user-id="${escapeHtml(access.userId)}" data-email="${escapeHtml(access.email)}" ${busy ? 'disabled' : ''}>Retirer l’accès</button></li>`).join('')}
           </ul>` : '<p class="shared-list">Pas encore partagé</p>'}
         </div>` : ''}
     </article>`;
@@ -210,6 +215,10 @@ function renderSecurity(): string {
           ? 'Ce compte n’a pas encore de clé de secours : un mot de passe oublié rendrait le coffre illisible.'
           : 'Clé de secours perdue ou vue par quelqu’un ? Remplacez-la : l’ancienne cessera aussitôt de fonctionner.'}</p>
         <p>Renouveler vos clés remplace votre paire de clés de chiffrement, ré-enveloppe l’accès à chaque secret, ferme vos autres sessions et vous donne une nouvelle clé de secours.</p>
+        <p class="fingerprint-block">Empreinte de votre clé publique
+          <code class="fingerprint">${escapeHtml(fingerprints.get(session.publicKey) ?? '…')}</code>
+          <span>Pour vérifier un partage, comparez-la de vive voix avec celle que votre interlocuteur voit à côté de votre adresse.</span>
+        </p>
       </div>
       <form id="security-form" class="form-stack">
         <label for="security-password">Mot de passe maître</label>
@@ -286,6 +295,15 @@ async function loadItems(): Promise<void> {
   );
   accessByItem = new Map(accessEntries);
   auditEntries = await readAuditLog(session);
+  const keys = new Set([session.publicKey]);
+  for (const accesses of accessByItem.values()) {
+    for (const access of accesses) if (access.publicKey) keys.add(access.publicKey);
+  }
+  await Promise.all(
+    [...keys]
+      .filter((key) => !fingerprints.has(key))
+      .map(async (key) => fingerprints.set(key, await publicKeyFingerprint(key))),
+  );
 }
 
 async function refreshAfterChange(message: string): Promise<void> {

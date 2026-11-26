@@ -32,6 +32,8 @@ function validCiphertext(value: unknown): value is string {
 interface WrappedKeyEntry {
   userId: string;
   wrappedKey: string;
+  // The public key the browser wrapped with: refused if it is no longer current.
+  publicKey: string;
 }
 
 function validWrappedKeyList(value: unknown): value is WrappedKeyEntry[] {
@@ -39,8 +41,10 @@ function validWrappedKeyList(value: unknown): value is WrappedKeyEntry[] {
   const seen = new Set<string>();
   for (const entry of value as unknown[]) {
     if (typeof entry !== 'object' || entry === null) return false;
-    const { userId, wrappedKey } = entry as Record<string, unknown>;
-    if (typeof userId !== 'string' || seen.has(userId) || !validWrappedKey(wrappedKey)) return false;
+    const { userId, wrappedKey, publicKey } = entry as Record<string, unknown>;
+    if (typeof userId !== 'string' || seen.has(userId) || !validWrappedKey(wrappedKey) || typeof publicKey !== 'string') {
+      return false;
+    }
     seen.add(userId);
   }
   return true;
@@ -90,8 +94,8 @@ export function itemRoutes(database: Database.Database): Router {
     }
     const emailValue = request.body?.email;
     const email = typeof emailValue === 'string' ? emailValue.trim().toLowerCase() : '';
-    const { wrappedKey } = request.body ?? {};
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !validWrappedKey(wrappedKey)) {
+    const { wrappedKey, recipientPublicKey } = request.body ?? {};
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !validWrappedKey(wrappedKey) || typeof recipientPublicKey !== 'string') {
       response.status(400).json({ error: 'Invalid sharing data' });
       return;
     }
@@ -100,9 +104,14 @@ export function itemRoutes(database: Database.Database): Router {
         .prepare('SELECT id FROM items WHERE id = ? AND owner_id = ?')
         .get(request.params.id, userId);
       if (!item) return { status: 'missing-item' as const };
-      const recipient = database.prepare('SELECT id FROM users WHERE email = ?').get(email) as { id: string } | undefined;
+      const recipient = database.prepare('SELECT id, public_key FROM users WHERE email = ?').get(email) as
+        | { id: string; public_key: string | null }
+        | undefined;
       if (!recipient) return { status: 'missing-recipient' as const };
       if (recipient.id === userId) return { status: 'self-share' as const };
+      // The recipient rotated their keys after the browser fetched the old public key:
+      // a key wrapped for it would be unreadable.
+      if (recipient.public_key !== recipientPublicKey) return { status: 'stale-key' as const };
       try {
         database
           .prepare('INSERT INTO item_keys (item_id, user_id, wrapped_key) VALUES (?, ?, ?)')
@@ -131,6 +140,10 @@ export function itemRoutes(database: Database.Database): Router {
     }
     if (result.status === 'already-shared') {
       response.status(409).json({ error: 'Item is already shared with this user' });
+      return;
+    }
+    if (result.status === 'stale-key') {
+      response.status(409).json({ error: 'A recipient changed keys, reload and try again' });
       return;
     }
     response.status(201).json({ sharedWithUserId: result.recipientId });
@@ -192,6 +205,11 @@ export function itemRoutes(database: Database.Database): Router {
       if (remaining.size !== provided.size || [...remaining].some((holder) => !provided.has(holder))) {
         return 'stale-access-list' as const;
       }
+      const currentKey = database.prepare('SELECT public_key FROM users WHERE id = ?');
+      for (const entry of wrappedKeys) {
+        const row = currentKey.get(entry.userId) as { public_key: string | null } | undefined;
+        if (row?.public_key !== entry.publicKey) return 'stale-key' as const;
+      }
 
       database.prepare('DELETE FROM item_keys WHERE item_id = ? AND user_id = ?').run(itemId, revokedId);
       database
@@ -212,6 +230,8 @@ export function itemRoutes(database: Database.Database): Router {
       response.status(404).json({ error: 'This user has no access to the item' });
     } else if (result === 'stale-access-list') {
       response.status(409).json({ error: 'The access list changed, reload and try again' });
+    } else if (result === 'stale-key') {
+      response.status(409).json({ error: 'A recipient changed keys, reload and try again' });
     } else {
       response.status(204).end();
     }

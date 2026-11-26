@@ -117,6 +117,11 @@ textarea { resize: vertical; }
 .shared-list { margin: 8px 0 0; color: #849087; font-size: 10px; }
 .access-list { display: grid; gap: 4px; margin: 10px 0 0; padding: 0; list-style: none; }
 .access-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 10px; color: #4b5850; background: #f8faf8; border-radius: 8px; font-size: 11px; overflow-wrap: anywhere; }
+.access-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.fingerprint { color: #7c8a81; font: 500 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .3px; overflow-wrap: anywhere; }
+.fingerprint-block { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; color: #3f4c44 !important; background: #f8faf8; border-radius: 9px; font-size: 12px !important; font-weight: 600; }
+.fingerprint-block .fingerprint { color: var(--ink); font-size: 12px; }
+.fingerprint-block span { color: var(--muted); font-size: 11px; font-weight: 400; }
 .text-button.danger { flex: 0 0 auto; color: #a23b2e; font-size: 11px; }
 .empty-state { padding: 43px 20px; color: var(--muted); background: #fff; border: 1px dashed #d9e3dc; border-radius: 14px; text-align: center; }
 .empty-icon { display: grid; place-items: center; width: 42px; height: 42px; margin: 0 auto 13px; color: var(--green); background: var(--green-soft); border-radius: 13px; font-size: 24px; }
