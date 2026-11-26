@@ -6,6 +6,7 @@ export type AuditAction =
   | 'logout'
   | 'recover'
   | 'recovery-update'
+  | 'rotate-keys'
   | 'create'
   | 'read'
   | 'update'
@@ -30,13 +31,20 @@ export interface AuditLine {
 }
 
 // Actions about the account itself: they never point to an item.
-const ACCOUNT_ACTIONS: ReadonlySet<AuditAction> = new Set<AuditAction>(['login', 'logout', 'recover', 'recovery-update']);
+const ACCOUNT_ACTIONS: ReadonlySet<AuditAction> = new Set<AuditAction>([
+  'login',
+  'logout',
+  'recover',
+  'recovery-update',
+  'rotate-keys',
+]);
 
 const ACTION_LABELS: Record<AuditAction, string> = {
   login: 'Connexion',
   logout: 'Déconnexion',
   recover: 'Récupération du compte',
   'recovery-update': 'Nouvelle clé de secours',
+  'rotate-keys': 'Renouvellement des clés',
   create: 'Création',
   read: 'Lecture',
   update: 'Modification',

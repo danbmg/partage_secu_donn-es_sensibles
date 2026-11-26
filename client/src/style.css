@@ -126,7 +126,7 @@ textarea { resize: vertical; }
 .toast.error { color: #8b3028; background: #fff0ed; border-color: #f2d0c9; }
 .audit-panel { margin-top: 34px; }
 .audit-list { display: grid; margin: 0; padding: 0; list-style: none; background: #fff; border: 1px solid var(--line); border-radius: 14px; }
-.audit-entry { display: grid; grid-template-columns: 120px 1fr auto; align-items: baseline; gap: 12px; padding: 11px 16px; border-top: 1px solid #f0f2f0; font-size: 12px; }
+.audit-entry { display: grid; grid-template-columns: 165px 1fr auto; align-items: baseline; gap: 12px; padding: 11px 16px; border-top: 1px solid #f0f2f0; font-size: 12px; }
 .audit-entry:first-child { border-top: 0; }
 .audit-action { color: var(--green); font-weight: 700; }
 .audit-detail { min-width: 0; color: #344139; overflow-wrap: anywhere; }

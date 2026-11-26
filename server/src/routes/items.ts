@@ -3,6 +3,7 @@ import { Router, type Request, type Response } from 'express';
 import type Database from 'better-sqlite3';
 import { recordAudit } from '../audit.js';
 import { requestUserId } from '../auth/require-session.js';
+import { validWrappedKey } from '../validation.js';
 
 interface ItemRow {
   id: string;
@@ -26,12 +27,6 @@ function validCiphertext(value: unknown): value is string {
   } catch {
     return false;
   }
-}
-
-function validWrappedKey(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  const decoded = Buffer.from(value, 'base64');
-  return decoded.length >= 256 && decoded.length <= 1024 && decoded.toString('base64') === value;
 }
 
 interface WrappedKeyEntry {

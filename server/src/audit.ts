@@ -5,6 +5,7 @@ export const AUDIT_ACTIONS = [
   'logout',
   'recover',
   'recovery-update',
+  'rotate-keys',
   'create',
   'read',
   'update',

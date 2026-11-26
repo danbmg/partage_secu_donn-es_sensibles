@@ -37,7 +37,8 @@ npm run build
 6. `logoutAccount()` demande au serveur d'oublier la session : le jeton devient inutilisable immédiatement, même s'il a été copié. Si une requête renvoie 401 alors que l'utilisateur est connecté (session fermée ailleurs ou expirée), l'interface revient à l'écran de connexion.
 7. `recoverAccount()` (mot de passe oublié) : la clé de secours prouve l'identité (`/api/recovery/key`), déchiffre la clé privée dans le navigateur, qui la rechiffre sous le nouveau mot de passe. La réinitialisation (`/api/recovery/reset`) remplace aussi la clé de secours utilisée par une nouvelle et ferme toutes les sessions du compte.
 8. `regenerateRecoveryKey()` remplace la clé de secours d'un utilisateur connecté (clé perdue, ou compte créé avant la récupération). Le serveur exige en plus de la session la preuve du mot de passe maître : un jeton volé ne suffit pas à poser sa propre clé de secours.
-9. `readAuditLog()` récupère le journal d'activité : les actions de l'utilisateur et toute action d'un tiers sur un élément dont il est propriétaire (lecture, partage). Le serveur ne connaît que des identifiants d'éléments ; le navigateur les remplace par les noms déchiffrés.
+9. `rotateAccountKeys()` remplace la paire RSA du compte. Le navigateur déballe chaque clé d'élément avec l'ancienne clé privée et la ré-enveloppe pour la nouvelle clé publique (le contenu des éléments n'est pas rechiffré), chiffre la nouvelle clé privée avec le mot de passe maître et génère une nouvelle clé de secours — l'ancienne protégeait une clé privée devenue inutile. Le serveur exige la preuve du mot de passe, refuse (409) une liste qui oublierait un élément détenu, et ferme les autres sessions du compte, qui gardaient l'ancienne clé privée en mémoire.
+10. `readAuditLog()` récupère le journal d'activité : les actions de l'utilisateur et toute action d'un tiers sur un élément dont il est propriétaire (lecture, partage). Le serveur ne connaît que des identifiants d'éléments ; le navigateur les remplace par les noms déchiffrés.
 
 ## Routes de l'API
 
@@ -52,6 +53,7 @@ npm run build
 | POST | `/api/recovery/key` | non | preuve de la clé de secours → clé privée chiffrée par la clé de secours |
 | POST | `/api/recovery/reset` | non | preuve de la clé de secours → nouveau mot de passe, nouvelle clé de secours, sessions fermées |
 | PUT | `/api/account/recovery` | oui + preuve du mot de passe | nouvelle clé de secours |
+| POST | `/api/account/rotate-keys` | oui + preuve du mot de passe | nouvelle paire de clés, clés d'éléments ré-enveloppées, nouvelle clé de secours |
 | GET | `/api/items` | oui | éléments accessibles (ciphertext + clé enveloppée pour l'appelant) |
 | POST | `/api/items` | oui | création d'un élément chiffré |
 | GET/PUT/DELETE | `/api/items/:id` | oui | lecture, remplacement du ciphertext, suppression (propriétaire) |
@@ -77,4 +79,12 @@ Limite assumée : si l'utilisateur perd à la fois son mot de passe maître et s
 
 Après révocation, l'ancien destinataire ne reçoit plus l'élément, et une clé qu'il aurait conservée ne déchiffre plus la version actuelle. En revanche, ce qu'il a déjà lu ou copié avant la révocation reste en sa possession : aucun système ne peut effacer un secret déjà vu. Un mot de passe partagé puis révoqué doit donc aussi être changé à la source.
 
-La rotation des clés de compte reste à réaliser dans la tâche suivante.
+## Rotation : trois niveaux de clés
+
+| Clé | Quand elle change | Ce qui est refait |
+|---|---|---|
+| Clé d'élément (AES-256-GCM) | à chaque révocation | contenu rechiffré, clé ré-enveloppée pour les accès restants |
+| Paire RSA du compte | « Renouveler mes clés » | clés d'éléments ré-enveloppées, clé privée rechiffrée, nouvelle clé de secours |
+| Clé dérivée du mot de passe | réinitialisation par clé de secours | clé privée rechiffrée sous le nouveau mot de passe |
+
+Limites connues : les clés publiques sont distribuées par le serveur sans vérification d'empreinte (un serveur malveillant pourrait substituer la sienne au moment d'un partage) ; aucune limitation du nombre d'essais n'est appliquée sur la connexion et la récupération.

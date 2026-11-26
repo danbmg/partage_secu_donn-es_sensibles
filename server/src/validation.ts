@@ -18,6 +18,13 @@ export function normalizeEmail(value: unknown): string | null {
   return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
 }
 
+// An AES item key encrypted with an RSA-OAEP public key (3072 bits -> 384 bytes).
+export function validWrappedKey(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const decoded = Buffer.from(value, 'base64');
+  return decoded.length >= 256 && decoded.length <= 1024 && decoded.toString('base64') === value;
+}
+
 // A private key encrypted in the browser (AES-GCM envelope as JSON text).
 export function validEncryptedKey(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 30_000;
