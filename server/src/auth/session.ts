@@ -90,6 +90,6 @@ export function revokeSession(database: Database.Database, sessionId: string): v
   database.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
 }
 
-export function revokeUserSessions(database: Database.Database, userId: string): void {
-  database.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+export function revokeUserSessions(database: Database.Database, userId: string, keepSessionId?: string): void {
+  database.prepare('DELETE FROM sessions WHERE user_id = ? AND id IS NOT ?').run(userId, keepSessionId ?? null);
 }

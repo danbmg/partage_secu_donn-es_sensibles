@@ -2,9 +2,33 @@ import { Router, type Request, type Response } from 'express';
 import type Database from 'better-sqlite3';
 import { recordAudit } from '../audit.js';
 import { hashAuthenticationProof, verifyAuthenticationProof } from '../auth/password-proof.js';
-import { requestUserId } from '../auth/require-session.js';
+import { requestSession, requestUserId } from '../auth/require-session.js';
 import { revokeUserSessions } from '../auth/session.js';
-import { containsClientSecret, normalizeEmail, objectBody, validBase64, validEncryptedKey } from '../validation.js';
+import {
+  containsClientSecret,
+  normalizeEmail,
+  objectBody,
+  validBase64,
+  validEncryptedKey,
+  validWrappedKey,
+} from '../validation.js';
+
+interface ItemKeyEntry {
+  itemId: string;
+  wrappedKey: string;
+}
+
+function validItemKeyList(value: unknown): value is ItemKeyEntry[] {
+  if (!Array.isArray(value) || value.length > 5_000) return false;
+  const seen = new Set<string>();
+  for (const entry of value as unknown[]) {
+    if (typeof entry !== 'object' || entry === null) return false;
+    const { itemId, wrappedKey } = entry as Record<string, unknown>;
+    if (typeof itemId !== 'string' || seen.has(itemId) || !validWrappedKey(wrappedKey)) return false;
+    seen.add(itemId);
+  }
+  return true;
+}
 
 interface RecoveryRow {
   id: string;
@@ -131,6 +155,74 @@ export function accountRoutes(database: Database.Database): Router {
       recordAudit(database, { userId, action: 'recovery-update' });
     });
     update();
+    response.status(204).end();
+  });
+
+  // Key pair rotation. The browser sends a new public key, the new private key encrypted
+  // under the master password, every item key it holds re-wrapped for the new public key,
+  // and new recovery material (the old one protects a private key that is now useless).
+  router.post('/account/rotate-keys', (request: Request, response: Response) => {
+    const session = requestSession(database, request);
+    if (!session) {
+      response.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    const body = objectBody(request);
+    const { authHash, publicKey, encryptedPrivateKey, recoveryAuthHash, recoveryEncryptedPrivateKey, wrappedKeys } = body;
+    if (containsClientSecret(body)) {
+      response.status(400).json({ error: 'Passwords must never be sent to the server' });
+      return;
+    }
+    if (
+      !validBase64(authHash, 32) ||
+      !validBase64(publicKey, -1) ||
+      Buffer.from(publicKey, 'base64').length < 200 ||
+      !validEncryptedKey(encryptedPrivateKey) ||
+      !validBase64(recoveryAuthHash, 32) ||
+      !validEncryptedKey(recoveryEncryptedPrivateKey) ||
+      !validItemKeyList(wrappedKeys)
+    ) {
+      response.status(400).json({ error: 'Invalid key rotation data' });
+      return;
+    }
+    const { userId, sessionId } = session;
+    const account = database.prepare('SELECT auth_hash FROM users WHERE id = ?').get(userId) as
+      | { auth_hash: string }
+      | undefined;
+    if (!account || !verifyAuthenticationProof(authHash, account.auth_hash)) {
+      response.status(403).json({ error: 'Invalid master password' });
+      return;
+    }
+
+    const rotate = database.transaction(() => {
+      // Every item key the user holds must come back re-wrapped, or that item
+      // would become unreadable: the old private key is about to disappear.
+      const held = new Set(
+        (database.prepare('SELECT item_id FROM item_keys WHERE user_id = ?').all(userId) as Array<{ item_id: string }>).map(
+          (row) => row.item_id,
+        ),
+      );
+      if (held.size !== wrappedKeys.length || wrappedKeys.some((entry) => !held.has(entry.itemId))) return false;
+
+      database
+        .prepare(
+          `UPDATE users SET public_key = ?, encrypted_private_key = ?,
+                            recovery_auth_hash = ?, recovery_encrypted_private_key = ?
+           WHERE id = ?`,
+        )
+        .run(publicKey, encryptedPrivateKey, hashAuthenticationProof(recoveryAuthHash), recoveryEncryptedPrivateKey, userId);
+      const updateKey = database.prepare('UPDATE item_keys SET wrapped_key = ? WHERE item_id = ? AND user_id = ?');
+      for (const entry of wrappedKeys) updateKey.run(entry.wrappedKey, entry.itemId, userId);
+      // Other devices still hold the old private key in memory and could no longer
+      // decrypt anything: close them so they log in again and fetch the new one.
+      revokeUserSessions(database, userId, sessionId);
+      recordAudit(database, { userId, action: 'rotate-keys' });
+      return true;
+    });
+    if (!rotate()) {
+      response.status(409).json({ error: 'Your item list changed, reload and try again' });
+      return;
+    }
     response.status(204).end();
   });
 

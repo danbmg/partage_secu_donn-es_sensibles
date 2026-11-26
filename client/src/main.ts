@@ -2,6 +2,7 @@ import './style.css';
 import { describeAuditEntry, readAuditLog, visibleAuditEntries, type AuditEntry } from './audit.js';
 import { loginAccount, logoutAccount, registerAccount, type AuthenticatedSession } from './auth.js';
 import { ApiError } from './http.js';
+import { rotateAccountKeys } from './keys.js';
 import { recoverAccount, regenerateRecoveryKey } from './recovery.js';
 import { listItemAccess, revokeVaultItemAccess, shareVaultItem, type ItemAccess } from './sharing.js';
 import { createVaultItem, readVaultItems, type VaultItem } from './vault.js';
@@ -63,6 +64,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   'Item is already shared with this user': 'Ce secret est déjà partagé avec cette personne.',
   'Cannot share an item with yourself': 'Vous avez déjà accès à ce secret.',
   'The access list changed, reload and try again': 'La liste des accès a changé entre-temps : actualisez puis recommencez.',
+  'Your item list changed, reload and try again': 'Un secret vient d’être partagé avec vous : actualisez puis recommencez.',
 };
 
 // A 401 while logged in means the server no longer knows this session
@@ -202,15 +204,17 @@ function renderSecurity(): string {
     <section class="panel security-panel ${missing ? 'needs-attention' : ''}" aria-labelledby="security-title">
       <div class="section-heading">
         <span class="eyebrow">Sécurité du compte</span>
-        <h2 id="security-title">Clé de secours</h2>
+        <h2 id="security-title">Clés et secours</h2>
         <p class="${missing ? 'warning-text' : ''}">${missing
           ? 'Ce compte n’a pas encore de clé de secours : un mot de passe oublié rendrait le coffre illisible.'
-          : 'Perdue, ou vue par quelqu’un d’autre ? Remplacez-la : l’ancienne cessera aussitôt de fonctionner.'}</p>
+          : 'Clé de secours perdue ou vue par quelqu’un ? Remplacez-la : l’ancienne cessera aussitôt de fonctionner.'}</p>
+        <p>Renouveler vos clés remplace votre paire de clés de chiffrement, ré-enveloppe l’accès à chaque secret, ferme vos autres sessions et vous donne une nouvelle clé de secours.</p>
       </div>
       <form id="security-form" class="form-stack">
         <label for="security-password">Mot de passe maître</label>
         <input id="security-password" name="password" type="password" autocomplete="current-password" required />
         <button class="button button-secondary" type="submit" name="intent" value="recovery" ${busy ? 'disabled' : ''}>Générer une nouvelle clé de secours</button>
+        <button class="button button-quiet" type="submit" name="intent" value="rotate" ${busy ? 'disabled' : ''}>Renouveler mes clés de chiffrement</button>
       </form>
     </section>`;
 }
@@ -399,16 +403,28 @@ app.addEventListener('submit', async (event) => {
     }
   } else if (form.id === 'security-form' && session) {
     const password = String(data.get('password') ?? '');
+    const submitter = (event as SubmitEvent).submitter;
+    const intent = submitter instanceof HTMLButtonElement ? submitter.value : 'recovery';
     busy = true;
     notice = '';
     render();
     try {
-      pendingRecoveryKey = await regenerateRecoveryKey(session, password);
-      busy = false;
-      await refreshAfterChange('Nouvelle clé de secours créée. L’ancienne ne fonctionne plus.');
+      if (intent === 'rotate') {
+        const rotation = await rotateAccountKeys(session, password);
+        session = rotation.session;
+        pendingRecoveryKey = rotation.recoveryKey;
+        busy = false;
+        await refreshAfterChange(
+          `Clés renouvelées : ${rotation.itemCount} secret(s) ré-enveloppé(s), autres sessions fermées. Notez votre nouvelle clé de secours.`,
+        );
+      } else {
+        pendingRecoveryKey = await regenerateRecoveryKey(session, password);
+        busy = false;
+        await refreshAfterChange('Nouvelle clé de secours créée. L’ancienne ne fonctionne plus.');
+      }
     } catch (error) {
       busy = false;
-      showError(error, 'Impossible de créer une nouvelle clé de secours.');
+      showError(error, intent === 'rotate' ? 'Le renouvellement des clés a échoué.' : 'Impossible de créer une nouvelle clé de secours.');
     }
   } else if (form.id === 'secret-form' && session) {
     const secret = {

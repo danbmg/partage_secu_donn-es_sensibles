@@ -27,7 +27,9 @@ export async function createRecoveryMaterial(privateKeyPkcs8: string): Promise<R
   return { recoveryKey, recoveryAuthHash, recoveryEncryptedPrivateKey };
 }
 
-async function decryptWithPassword(session: AuthenticatedSession, masterPassword: string): Promise<string> {
+// Re-checks the master password in the browser (wrong password = AES-GCM failure)
+// and returns the private key in PKCS#8, for operations that must re-encrypt it.
+export async function decryptPrivateKeyWithPassword(session: AuthenticatedSession, masterPassword: string): Promise<string> {
   try {
     return await decryptText(session.encryptedPrivateKey, await deriveEncryptionKey(masterPassword, session.salt));
   } catch {
@@ -67,7 +69,7 @@ export async function recoverAccount(email: string, recoveryKey: string, newMast
 
 // Lost or exposed recovery key, or an account created before recovery existed.
 export async function regenerateRecoveryKey(session: AuthenticatedSession, masterPassword: string): Promise<string> {
-  const privateKeyPkcs8 = await decryptWithPassword(session, masterPassword);
+  const privateKeyPkcs8 = await decryptPrivateKeyWithPassword(session, masterPassword);
   const authHash = await deriveAuthHash(masterPassword, session.salt);
   const next = await createRecoveryMaterial(privateKeyPkcs8);
   await apiRequest<void>('/api/account/recovery', {
