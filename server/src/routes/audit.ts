@@ -7,7 +7,7 @@ export function auditRoutes(database: Database.Database): Router {
   const router = Router();
 
   router.get('/', (request: Request, response: Response) => {
-    const userId = requestUserId(request);
+    const userId = requestUserId(database, request);
     if (!userId) {
       response.status(401).json({ error: 'Authentication required' });
       return;

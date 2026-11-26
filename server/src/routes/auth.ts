@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import type Database from 'better-sqlite3';
 import { recordAudit } from '../audit.js';
-import { createSession } from '../auth/session.js';
+import { requestSession } from '../auth/require-session.js';
+import { createSession, revokeSession } from '../auth/session.js';
 import { hashAuthenticationProof, verifyAuthenticationProof } from '../auth/password-proof.js';
 
 interface AccountRow {
@@ -124,11 +125,22 @@ export function authRoutes(database: Database.Database): Router {
 
     recordAudit(database, { userId: account.id, action: 'login' });
     response.status(200).json({
-      token: createSession(account.id),
+      token: createSession(database, account.id),
       userId: account.id,
       publicKey: account.public_key,
       encryptedPrivateKey: account.encrypted_private_key,
     });
+  });
+
+  router.post('/logout', (request: Request, response: Response) => {
+    const session = requestSession(database, request);
+    if (!session) {
+      response.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    revokeSession(database, session.sessionId);
+    recordAudit(database, { userId: session.userId, action: 'logout' });
+    response.status(204).end();
   });
 
   return router;

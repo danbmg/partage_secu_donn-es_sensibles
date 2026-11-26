@@ -49,7 +49,7 @@ export function itemRoutes(database: Database.Database): Router {
   const router = Router();
 
   router.post('/', (request: Request, response: Response) => {
-    const userId = requestUserId(request);
+    const userId = requestUserId(database, request);
     if (!userId) {
       response.status(401).json({ error: 'Authentication required' });
       return;
@@ -71,7 +71,7 @@ export function itemRoutes(database: Database.Database): Router {
   });
 
   router.post('/:id/shares', (request: Request, response: Response) => {
-    const userId = requestUserId(request);
+    const userId = requestUserId(database, request);
     if (!userId) {
       response.status(401).json({ error: 'Authentication required' });
       return;
@@ -125,7 +125,7 @@ export function itemRoutes(database: Database.Database): Router {
   });
 
   router.get('/:id/shares', (request: Request, response: Response) => {
-    const userId = requestUserId(request);
+    const userId = requestUserId(database, request);
     if (!userId) {
       response.status(401).json({ error: 'Authentication required' });
       return;
@@ -148,7 +148,7 @@ export function itemRoutes(database: Database.Database): Router {
   });
 
   router.get('/', (request: Request, response: Response) => {
-    const userId = requestUserId(request);
+    const userId = requestUserId(database, request);
     if (!userId) {
       response.status(401).json({ error: 'Authentication required' });
       return;
@@ -168,7 +168,7 @@ export function itemRoutes(database: Database.Database): Router {
   });
 
   router.get('/:id', (request: Request, response: Response) => {
-    const userId = requestUserId(request);
+    const userId = requestUserId(database, request);
     if (!userId) {
       response.status(401).json({ error: 'Authentication required' });
       return;
@@ -189,7 +189,7 @@ export function itemRoutes(database: Database.Database): Router {
   });
 
   router.put('/:id', (request: Request, response: Response) => {
-    const userId = requestUserId(request);
+    const userId = requestUserId(database, request);
     if (!userId) {
       response.status(401).json({ error: 'Authentication required' });
       return;
@@ -211,7 +211,7 @@ export function itemRoutes(database: Database.Database): Router {
   });
 
   router.delete('/:id', (request: Request, response: Response) => {
-    const userId = requestUserId(request);
+    const userId = requestUserId(database, request);
     if (!userId) {
       response.status(401).json({ error: 'Authentication required' });
       return;

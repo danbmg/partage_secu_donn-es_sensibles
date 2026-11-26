@@ -63,6 +63,16 @@ const migrations: string[] = [
   CREATE INDEX idx_audit_user_created ON audit_log(user_id, created_at);
   CREATE INDEX idx_audit_item ON audit_log(item_id);
   `,
+  // 2. Server-side sessions: a signed token is only accepted while its row exists,
+  //    so logging out (or resetting a password) can invalidate it before it expires.
+  `
+  CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_sessions_user ON sessions(user_id);
+  `,
 ];
 
 export const schemaVersion = migrations.length;

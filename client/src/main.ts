@@ -1,6 +1,7 @@
 import './style.css';
 import { describeAuditEntry, readAuditLog, visibleAuditEntries, type AuditEntry } from './audit.js';
-import { loginAccount, registerAccount, type AuthenticatedSession } from './auth.js';
+import { loginAccount, logoutAccount, registerAccount, type AuthenticatedSession } from './auth.js';
+import { ApiError } from './http.js';
 import { shareVaultItem, listItemAccess, type ItemAccess } from './sharing.js';
 import { createVaultItem, readVaultItems, type VaultItem } from './vault.js';
 
@@ -36,6 +37,25 @@ function setNotice(message: string, kind: 'success' | 'error' = 'success'): void
   notice = message;
   noticeKind = kind;
   render();
+}
+
+function clearSession(): void {
+  session = null;
+  accountEmail = '';
+  items = [];
+  accessByItem.clear();
+  auditEntries = [];
+}
+
+// A 401 while logged in means the server no longer knows this session
+// (logged out elsewhere, expired, or account reset): drop the local state.
+function showError(error: unknown, fallback: string): void {
+  if (session && error instanceof ApiError && error.status === 401) {
+    clearSession();
+    setNotice('Votre session a expiré. Reconnectez-vous.', 'error');
+    return;
+  }
+  setNotice(error instanceof Error ? error.message : fallback, 'error');
 }
 
 function renderAuth(): string {
@@ -194,19 +214,22 @@ app.addEventListener('click', async (event) => {
     notice = '';
     render();
   } else if (action === 'logout') {
-    session = null;
-    accountEmail = '';
-    items = [];
-    accessByItem.clear();
-    auditEntries = [];
-    notice = 'Vous êtes déconnecté de cet appareil.';
-    render();
+    const current = session;
+    const serverConfirmed = current
+      ? await logoutAccount(current).then(
+          () => true,
+          (error: unknown) => error instanceof ApiError && error.status === 401,
+        )
+      : true;
+    clearSession();
+    if (serverConfirmed) setNotice('Vous êtes déconnecté.');
+    else setNotice('Déconnecté de cet appareil, mais le serveur est injoignable : la session expirera d’elle-même.', 'error');
   } else if (action === 'refresh') {
     try {
       await loadItems();
       setNotice('Coffre actualisé.');
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Impossible de charger le coffre.', 'error');
+      showError(error, 'Impossible de charger le coffre.');
     }
   } else if (action === 'reveal') {
     const input = app.querySelector<HTMLInputElement>(`[data-password-for="${CSS.escape(button.dataset.id ?? '')}"]`);
@@ -238,7 +261,7 @@ app.addEventListener('submit', async (event) => {
       setNotice(authMode === 'register' ? 'Compte créé. Votre coffre est prêt.' : 'Connexion réussie.');
     } catch (error) {
       busy = false;
-      setNotice(error instanceof Error ? error.message : 'La connexion a échoué.', 'error');
+      showError(error, 'La connexion a échoué.');
     }
   } else if (form.id === 'secret-form' && session) {
     const secret = {
@@ -256,7 +279,7 @@ app.addEventListener('submit', async (event) => {
       await refreshAfterChange('Secret chiffré et enregistré.');
     } catch (error) {
       busy = false;
-      setNotice(error instanceof Error ? error.message : 'Impossible d’enregistrer ce secret.', 'error');
+      showError(error, 'Impossible d’enregistrer ce secret.');
     }
   } else if (form.dataset.shareId && session) {
     const itemId = form.dataset.shareId;
@@ -270,7 +293,7 @@ app.addEventListener('submit', async (event) => {
       await refreshAfterChange(`Secret partagé avec ${email}.`);
     } catch (error) {
       busy = false;
-      setNotice(error instanceof Error ? error.message : 'Le partage a échoué.', 'error');
+      showError(error, 'Le partage a échoué.');
     }
   }
 });
