@@ -110,6 +110,12 @@ textarea { resize: vertical; }
 .password-row input { width: min(230px, 100%); min-height: 27px; padding: 2px 7px; background: #f8faf8; font-size: 12px; }
 .password-row .text-button { flex: 0 0 auto; }
 .notes-row dd { white-space: pre-wrap; }
+.card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin: -6px 0 14px; font-size: 12px; }
+.card-actions.confirm { gap: 10px; padding: 10px 12px; color: #8b3028; background: #fff0ed; border-radius: 9px; }
+.card-actions.confirm span { flex: 1 1 220px; line-height: 1.4; }
+.button-danger { color: #fff; background: #a23b2e; }
+.button-danger:hover { background: #8b3028; }
+.create-panel.is-editing { border-color: #b9dcc8; box-shadow: 0 0 0 3px #176b4b14; }
 .share-area { padding-top: 13px; border-top: 1px solid #edf0ed; }
 .share-form label { display: block; margin-bottom: 8px; }
 .inline-form { display: flex; gap: 8px; }
