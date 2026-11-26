@@ -33,7 +33,8 @@ npm run build
 2. `loginAccount()` récupère le sel public, prouve le mot de passe avec le dérivé et déchiffre la clé privée uniquement en mémoire côté client.
 3. `createVaultItem()` chiffre le contenu avec une clé AES-256-GCM unique, puis enveloppe cette clé avec la clé publique du propriétaire.
 4. `shareVaultItem()` enveloppe la même clé d'élément avec la clé publique du destinataire. Le destinataire peut alors lire le ciphertext avec sa clé privée.
-5. `readAuditLog()` récupère le journal d'activité : les actions de l'utilisateur et toute action d'un tiers sur un élément dont il est propriétaire (lecture, partage). Le serveur ne connaît que des identifiants d'éléments ; le navigateur les remplace par les noms déchiffrés.
+5. `logoutAccount()` demande au serveur d'oublier la session : le jeton devient inutilisable immédiatement, même s'il a été copié. Si une requête renvoie 401 alors que l'utilisateur est connecté (session fermée ailleurs ou expirée), l'interface revient à l'écran de connexion.
+6. `readAuditLog()` récupère le journal d'activité : les actions de l'utilisateur et toute action d'un tiers sur un élément dont il est propriétaire (lecture, partage). Le serveur ne connaît que des identifiants d'éléments ; le navigateur les remplace par les noms déchiffrés.
 
 ## Routes de l'API
 
@@ -44,6 +45,7 @@ npm run build
 | GET | `/api/users/:email/public-key` | non | clé publique d'un destinataire |
 | POST | `/api/register` | non | création de compte (dérivé d'authentification, clé publique, clé privée chiffrée) |
 | POST | `/api/login` | non | preuve du mot de passe → jeton de session et clé privée chiffrée |
+| POST | `/api/logout` | oui | ferme la session courante (les autres appareils restent connectés) |
 | GET | `/api/items` | oui | éléments accessibles (ciphertext + clé enveloppée pour l'appelant) |
 | POST | `/api/items` | oui | création d'un élément chiffré |
 | GET/PUT/DELETE | `/api/items/:id` | oui | lecture, remplacement du ciphertext, suppression (propriétaire) |
@@ -53,6 +55,8 @@ npm run build
 ## Base de données
 
 Le schéma initial (`baseSchema` dans `server/src/db.ts`) n'est plus modifié : chaque évolution est une migration numérotée, appliquée une seule fois au démarrage grâce à `PRAGMA user_version`. Une base locale existante est donc mise à niveau sans perte de données.
+
+Les jetons de session sont signés (HMAC-SHA-256) **et** enregistrés dans la table `sessions` : un jeton n'est accepté que si sa ligne existe encore. La signature écarte les jetons forgés sans requête SQL ; la table permet de fermer une session avant son expiration (8 h).
 
 Le journal d'audit est écrit uniquement par `recordAudit()` (`server/src/audit.ts`), qui porte la liste des actions autorisées. Une lecture est journalisée par élément renvoyé, pour qu'un propriétaire voie qui a consulté ses secrets.
 
