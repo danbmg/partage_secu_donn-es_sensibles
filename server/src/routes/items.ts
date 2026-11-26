@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import type Database from 'better-sqlite3';
+import { recordAudit } from '../audit.js';
 import { requestUserId } from '../auth/require-session.js';
 
 interface ItemRow {
@@ -48,7 +49,7 @@ export function itemRoutes(database: Database.Database): Router {
   const router = Router();
 
   router.post('/', (request: Request, response: Response) => {
-    const userId = requestUserId(request);
+    const userId = requestUserId(database, request);
     if (!userId) {
       response.status(401).json({ error: 'Authentication required' });
       return;
@@ -63,14 +64,14 @@ export function itemRoutes(database: Database.Database): Router {
     const createItem = database.transaction(() => {
       database.prepare('INSERT INTO items (id, owner_id, ciphertext) VALUES (?, ?, ?)').run(itemId, userId, ciphertext);
       database.prepare('INSERT INTO item_keys (item_id, user_id, wrapped_key) VALUES (?, ?, ?)').run(itemId, userId, wrappedKey);
-      database.prepare("INSERT INTO audit_log (user_id, item_id, action) VALUES (?, ?, 'create')").run(userId, itemId);
+      recordAudit(database, { userId, itemId, action: 'create' });
     });
     createItem();
     response.status(201).json({ id: itemId });
   });
 
   router.post('/:id/shares', (request: Request, response: Response) => {
-    const userId = requestUserId(request);
+    const userId = requestUserId(database, request);
     if (!userId) {
       response.status(401).json({ error: 'Authentication required' });
       return;
@@ -100,9 +101,7 @@ export function itemRoutes(database: Database.Database): Router {
         }
         throw error;
       }
-      database
-        .prepare("INSERT INTO audit_log (user_id, item_id, action) VALUES (?, ?, 'share')")
-        .run(userId, request.params.id);
+      recordAudit(database, { userId, itemId: String(request.params.id), targetUserId: recipient.id, action: 'share' });
       return { status: 'shared' as const, recipientId: recipient.id };
     });
     const result = shareItem();
@@ -126,7 +125,7 @@ export function itemRoutes(database: Database.Database): Router {
   });
 
   router.get('/:id/shares', (request: Request, response: Response) => {
-    const userId = requestUserId(request);
+    const userId = requestUserId(database, request);
     if (!userId) {
       response.status(401).json({ error: 'Authentication required' });
       return;
@@ -149,7 +148,7 @@ export function itemRoutes(database: Database.Database): Router {
   });
 
   router.get('/', (request: Request, response: Response) => {
-    const userId = requestUserId(request);
+    const userId = requestUserId(database, request);
     if (!userId) {
       response.status(401).json({ error: 'Authentication required' });
       return;
@@ -161,14 +160,15 @@ export function itemRoutes(database: Database.Database): Router {
          WHERE k.user_id = ? ORDER BY i.created_at DESC`,
       )
       .all(userId) as ItemRow[];
-    database
-      .prepare("INSERT INTO audit_log (user_id, action) VALUES (?, 'read')")
-      .run(userId);
+    const logReads = database.transaction(() => {
+      for (const row of rows) recordAudit(database, { userId, itemId: row.id, action: 'read' });
+    });
+    logReads();
     response.status(200).json({ items: rows.map(serialize) });
   });
 
   router.get('/:id', (request: Request, response: Response) => {
-    const userId = requestUserId(request);
+    const userId = requestUserId(database, request);
     if (!userId) {
       response.status(401).json({ error: 'Authentication required' });
       return;
@@ -184,14 +184,12 @@ export function itemRoutes(database: Database.Database): Router {
       response.status(404).json({ error: 'Item not found' });
       return;
     }
-    database
-      .prepare("INSERT INTO audit_log (user_id, item_id, action) VALUES (?, ?, 'read')")
-      .run(userId, row.id);
+    recordAudit(database, { userId, itemId: row.id, action: 'read' });
     response.status(200).json(serialize(row));
   });
 
   router.put('/:id', (request: Request, response: Response) => {
-    const userId = requestUserId(request);
+    const userId = requestUserId(database, request);
     if (!userId) {
       response.status(401).json({ error: 'Authentication required' });
       return;
@@ -208,14 +206,12 @@ export function itemRoutes(database: Database.Database): Router {
       response.status(404).json({ error: 'Item not found' });
       return;
     }
-    database
-      .prepare("INSERT INTO audit_log (user_id, item_id, action) VALUES (?, ?, 'update')")
-      .run(userId, request.params.id);
+    recordAudit(database, { userId, itemId: String(request.params.id), action: 'update' });
     response.status(200).json({ updated: true });
   });
 
   router.delete('/:id', (request: Request, response: Response) => {
-    const userId = requestUserId(request);
+    const userId = requestUserId(database, request);
     if (!userId) {
       response.status(401).json({ error: 'Authentication required' });
       return;
@@ -223,9 +219,7 @@ export function itemRoutes(database: Database.Database): Router {
     const deleteItem = database.transaction(() => {
       const owner = database.prepare('SELECT id FROM items WHERE id = ? AND owner_id = ?').get(request.params.id, userId);
       if (!owner) return false;
-      database
-        .prepare("INSERT INTO audit_log (user_id, item_id, action) VALUES (?, ?, 'delete')")
-        .run(userId, request.params.id);
+      recordAudit(database, { userId, itemId: String(request.params.id), action: 'delete' });
       database.prepare('DELETE FROM items WHERE id = ?').run(request.params.id);
       return true;
     });

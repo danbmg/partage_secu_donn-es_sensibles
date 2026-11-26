@@ -7,6 +7,7 @@ import {
   unwrapItemKey,
   wrapItemKey,
 } from './crypto/index.js';
+import { apiRequest } from './http.js';
 
 export interface VaultSecret {
   name: string;
@@ -31,26 +32,8 @@ export interface VaultItem extends VaultSecret {
   updatedAt: string;
 }
 
-async function api<T>(path: string, session: AuthenticatedSession, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${session.token}`,
-      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-      ...init?.headers,
-    },
-  });
-  if (!response.ok) {
-    if (response.status === 204) return undefined as T;
-    const body: unknown = await response.json();
-    const message =
-      typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string'
-        ? body.error
-        : 'Request failed';
-    throw new Error(message);
-  }
-  if (response.status === 204) return undefined as T;
-  return (await response.json()) as T;
+async function api<T>(path: string, session: AuthenticatedSession, init?: { method?: string; body?: unknown }): Promise<T> {
+  return apiRequest<T>(path, { ...init, token: session.token });
 }
 
 async function decryptItem(item: EncryptedItem, session: AuthenticatedSession): Promise<VaultItem> {
@@ -76,7 +59,7 @@ export async function createVaultItem(
   const wrappedKey = await wrapItemKey(rawItemKey, session.publicKey);
   return api('/api/items', session, {
     method: 'POST',
-    body: JSON.stringify({ ciphertext, wrappedKey }),
+    body: { ciphertext, wrappedKey },
   });
 }
 
@@ -99,7 +82,7 @@ export async function updateVaultItem(
   const ciphertext = await encryptText(JSON.stringify(secret), key);
   await api(`/api/items/${encodeURIComponent(id)}`, session, {
     method: 'PUT',
-    body: JSON.stringify({ ciphertext }),
+    body: { ciphertext },
   });
 }
 

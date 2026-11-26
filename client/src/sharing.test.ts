@@ -23,6 +23,9 @@ describe('client-side item sharing', () => {
       userId: 'owner-1',
       publicKey: ownerKeys.publicKey,
       privateKey: await importRsaPrivateKey(ownerKeys.privateKey),
+      salt: '',
+      encryptedPrivateKey: '',
+      hasRecoveryKey: true,
     };
     const secretText = JSON.stringify({ name: 'Bank credentials', password: 'never sent as plaintext' });
     const rawItemKey = await createRandomItemKey();

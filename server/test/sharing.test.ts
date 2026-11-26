@@ -18,7 +18,7 @@ function fixture() {
   }
   database.prepare('INSERT INTO items (id, owner_id, ciphertext) VALUES (?, ?, ?)').run('item-1', 'owner', ciphertext);
   database.prepare('INSERT INTO item_keys (item_id, user_id, wrapped_key) VALUES (?, ?, ?)').run('item-1', 'owner', ownerWrappedKey);
-  return { app, database, ownerToken: createSession('owner'), otherToken: createSession('other') };
+  return { app, database, ownerToken: createSession(database, 'owner'), otherToken: createSession(database, 'other') };
 }
 
 afterEach(() => {

@@ -1,10 +1,11 @@
-import { concatBytes, fromBase64, toBase64 } from './encoding.js';
+import { concatBytes, fromBase32, fromBase64, toBase32, toBase64 } from './encoding.js';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const KDF_ITERATIONS = 600_000;
 const AES_IV_BYTES = 12;
 const AES_KEY_BYTES = 32;
+const RECOVERY_KEY_BYTES = 20;
 
 function bufferSource(bytes: Uint8Array): ArrayBuffer {
   return new Uint8Array(bytes).buffer as ArrayBuffer;
@@ -57,6 +58,48 @@ export async function deriveAuthHash(password: string, saltBase64: string): Prom
 export function createRandomSalt(): string {
   const bytes = cryptoApi().getRandomValues(new Uint8Array(16));
   return toBase64(bytes);
+}
+
+// 160 random bits, written as 8 groups of 4 base32 characters (ABCD-EFGH-...).
+export function createRecoveryKey(): string {
+  const encoded = toBase32(cryptoApi().getRandomValues(new Uint8Array(RECOVERY_KEY_BYTES)));
+  return encoded.match(/.{4}/g)?.join('-') ?? encoded;
+}
+
+export function parseRecoveryKey(input: string): Uint8Array {
+  const compact = input.toUpperCase().replace(/[\s-]/g, '');
+  if (!/^[A-Z2-7]{32}$/.test(compact)) throw new Error('Invalid recovery key');
+  return fromBase32(compact);
+}
+
+async function recoveryBaseKey(recoveryKey: string): Promise<CryptoKey> {
+  return cryptoApi().subtle.importKey('raw', bufferSource(parseRecoveryKey(recoveryKey)), 'HKDF', false, ['deriveBits', 'deriveKey']);
+}
+
+function recoveryParams(domain: string): HkdfParams {
+  return {
+    name: 'HKDF',
+    hash: 'SHA-256',
+    salt: bufferSource(encoder.encode('partage-securise recovery')),
+    info: bufferSource(encoder.encode(domain)),
+  };
+}
+
+// The recovery key is random, not chosen by a human: there is no dictionary to slow
+// down, so one HKDF step is enough where a password needs 600 000 PBKDF2 rounds.
+export async function deriveRecoveryAuthHash(recoveryKey: string): Promise<string> {
+  const bits = await cryptoApi().subtle.deriveBits(recoveryParams('authentication'), await recoveryBaseKey(recoveryKey), 256);
+  return toBase64(new Uint8Array(bits));
+}
+
+export async function deriveRecoveryEncryptionKey(recoveryKey: string): Promise<CryptoKey> {
+  return cryptoApi().subtle.deriveKey(
+    recoveryParams('encryption'),
+    await recoveryBaseKey(recoveryKey),
+    { name: 'AES-GCM', length: AES_KEY_BYTES * 8 },
+    false,
+    ['encrypt', 'decrypt'],
+  );
 }
 
 export async function encryptBytes(plaintext: Uint8Array, key: CryptoKey): Promise<string> {
