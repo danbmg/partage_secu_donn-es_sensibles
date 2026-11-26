@@ -49,6 +49,7 @@ describe('client-side item sharing', () => {
 
     await shareVaultItem('item-1', 'bob@example.com', session);
     expect(sharePayload?.email).toBe('bob@example.com');
+    expect(sharePayload?.recipientPublicKey).toBe(recipientKeys.publicKey);
     expect(JSON.stringify(sharePayload)).not.toContain('never sent as plaintext');
     const recipientPrivateKey = await importRsaPrivateKey(recipientKeys.privateKey);
     const recipientRawKey = await unwrapItemKey(sharePayload?.wrappedKey ?? '', recipientPrivateKey);
@@ -70,7 +71,9 @@ describe('client-side item sharing', () => {
     const secretText = JSON.stringify({ name: 'Alarm code', password: '4242' });
     const oldRawKey = await createRandomItemKey();
     const oldCiphertext = await encryptText(secretText, await importAesKey(oldRawKey));
-    let revocation: { url: string; body: { ciphertext: string; wrappedKeys: Array<{ userId: string; wrappedKey: string }> } } | undefined;
+    let revocation:
+      | { url: string; body: { ciphertext: string; wrappedKeys: Array<{ userId: string; publicKey: string; wrappedKey: string }> } }
+      | undefined;
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -101,6 +104,7 @@ describe('client-side item sharing', () => {
     expect(revocation?.url).toBe('/api/items/item-1/shares/bob-1');
     const { ciphertext, wrappedKeys } = revocation?.body ?? { ciphertext: '', wrappedKeys: [] };
     expect(wrappedKeys.map((entry) => entry.userId)).toEqual(['owner-1', 'carol-1']);
+    expect(wrappedKeys.map((entry) => entry.publicKey)).toEqual([owner.publicKey, carol.publicKey]);
     for (const [entry, keys] of [[wrappedKeys[0], owner], [wrappedKeys[1], carol]] as const) {
       const raw = await unwrapItemKey(entry?.wrappedKey ?? '', await importRsaPrivateKey(keys.privateKey));
       expect(await decryptText(ciphertext, await importAesKey(raw))).toBe(secretText);

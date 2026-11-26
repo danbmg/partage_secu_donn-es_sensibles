@@ -12,7 +12,9 @@ function fixture() {
   const database = openDatabase(':memory:');
   databases.push(database);
   for (const [id, email] of [['owner', 'owner@example.com'], ['other', 'other@example.com'], ['third', 'third@example.com']]) {
-    database.prepare('INSERT INTO users (id, email, kdf_salt, auth_hash) VALUES (?, ?, ?, ?)').run(id, email, 'salt', 'hash');
+    database
+      .prepare('INSERT INTO users (id, email, kdf_salt, auth_hash, public_key) VALUES (?, ?, ?, ?, ?)')
+      .run(id, email, 'salt', 'hash', `${id}-public-key`);
   }
   return {
     app: createApp(database),
@@ -38,7 +40,7 @@ describe('audit log', () => {
     const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
     const { body } = await request(app).post('/api/items').set(auth(ownerToken)).send({ ciphertext, wrappedKey });
     const itemId = body.id as string;
-    await request(app).post(`/api/items/${itemId}/shares`).set(auth(ownerToken)).send({ email: 'other@example.com', wrappedKey });
+    await request(app).post(`/api/items/${itemId}/shares`).set(auth(ownerToken)).send({ email: 'other@example.com', wrappedKey, recipientPublicKey: 'other-public-key' });
     await request(app).get('/api/items').set(auth(otherToken));
     await request(app).post('/api/items').set(auth(thirdToken)).send({ ciphertext, wrappedKey });
 

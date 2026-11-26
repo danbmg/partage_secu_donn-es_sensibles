@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loginAccount, logoutAccount, registerAccount } from './auth.js';
+import { generateRsaKeyPair } from './crypto/index.js';
 import { ApiError } from './http.js';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -72,4 +73,32 @@ describe('browser account flow', () => {
     expect(failure).toBeInstanceOf(ApiError);
     expect(failure).toMatchObject({ status: 401, message: 'Authentication required' });
   });
+
+  it('refuses to log in when the server returns a public key that is not mine', async () => {
+    let registration: Record<string, string> | undefined;
+    const substitute = await generateRsaKeyPair();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === '/api/register') {
+          registration = JSON.parse(String(init?.body)) as Record<string, string>;
+          return Response.json({ userId: 'user-1' }, { status: 201 });
+        }
+        if (url.startsWith('/api/auth/salt')) return Response.json({ salt: registration?.salt });
+        return Response.json({
+          token: 'tok',
+          userId: 'user-1',
+          publicKey: substitute.publicKey,
+          encryptedPrivateKey: registration?.encryptedPrivateKey,
+          hasRecoveryKey: true,
+        });
+      }),
+    );
+
+    await registerAccount('alice@example.com', 'a strong master password');
+    await expect(loginAccount('alice@example.com', 'a strong master password')).rejects.toThrow(
+      'Public key does not match private key',
+    );
+  }, 60_000);
 });

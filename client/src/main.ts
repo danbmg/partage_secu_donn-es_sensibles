@@ -1,11 +1,12 @@
 import './style.css';
 import { describeAuditEntry, readAuditLog, visibleAuditEntries, type AuditEntry } from './audit.js';
 import { loginAccount, logoutAccount, registerAccount, type AuthenticatedSession } from './auth.js';
+import { publicKeyFingerprint } from './crypto/index.js';
 import { ApiError } from './http.js';
 import { rotateAccountKeys } from './keys.js';
 import { recoverAccount, regenerateRecoveryKey } from './recovery.js';
 import { listItemAccess, revokeVaultItemAccess, shareVaultItem, type ItemAccess } from './sharing.js';
-import { createVaultItem, readVaultItems, type VaultItem } from './vault.js';
+import { createVaultItem, deleteVaultItem, readVaultItems, updateVaultItem, type VaultItem } from './vault.js';
 
 const root = document.querySelector<HTMLDivElement>('#app');
 if (!root) throw new Error('Application root was not found');
@@ -19,6 +20,10 @@ let pendingRecoveryKey: string | null = null;
 let items: VaultItem[] = [];
 let accessByItem = new Map<string, ItemAccess[]>();
 let auditEntries: AuditEntry[] = [];
+let editingItemId: string | null = null;
+let confirmingDeleteId: string | null = null;
+// Public key (base64) -> fingerprint, computed once per key.
+const fingerprints = new Map<string, string>();
 let notice = '';
 let noticeKind: 'success' | 'error' = 'success';
 let apiReady = false;
@@ -50,6 +55,16 @@ function clearSession(): void {
   accessByItem.clear();
   auditEntries = [];
   pendingRecoveryKey = null;
+  editingItemId = null;
+  confirmingDeleteId = null;
+  fingerprints.clear();
+}
+
+// Empties a form in the current DOM, so render() has no draft to restore into it.
+function clearDraft(selector: string): void {
+  for (const field of app.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(`${selector} input, ${selector} textarea`)) {
+    field.value = '';
+  }
 }
 
 // Server and crypto errors are in English (they end up in logs); the page speaks French.
@@ -60,10 +75,13 @@ const ERROR_MESSAGES: Record<string, string> = {
   'Invalid email or recovery key': 'Adresse e-mail ou clé de secours incorrecte.',
   'Invalid recovery key': 'Clé de secours mal saisie : 32 caractères, lettres A à Z et chiffres 2 à 7.',
   'Invalid master password': 'Mot de passe maître incorrect.',
+  'Too many failed attempts, try again later': 'Trop de tentatives échouées : réessayez dans quelques minutes.',
   'Recipient not found': 'Aucun compte ne correspond à ce destinataire.',
   'Item is already shared with this user': 'Ce secret est déjà partagé avec cette personne.',
   'Cannot share an item with yourself': 'Vous avez déjà accès à ce secret.',
   'The access list changed, reload and try again': 'La liste des accès a changé entre-temps : actualisez puis recommencez.',
+  'A recipient changed keys, reload and try again': 'Un destinataire vient de renouveler ses clés : actualisez puis recommencez.',
+  'Public key does not match private key': 'La clé publique fournie par le serveur ne correspond pas à votre clé privée : connexion refusée.',
   'Your item list changed, reload and try again': 'Un secret vient d’être partagé avec vous : actualisez puis recommencez.',
 };
 
@@ -93,7 +111,7 @@ function renderRecoverForm(): string {
         <label for="recovery-key">Clé de secours</label>
         <input id="recovery-key" name="recoveryKey" class="mono-input" autocomplete="off" spellcheck="false" placeholder="ABCD-EFGH-…" required />
         <label for="new-master-password">Nouveau mot de passe maître</label>
-        <input id="new-master-password" name="password" type="password" autocomplete="new-password" placeholder="12 caractères minimum" minlength="12" required />
+        <input id="new-master-password" data-no-draft name="password" type="password" autocomplete="new-password" placeholder="12 caractères minimum" minlength="12" required />
         <button class="button button-primary" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'Veuillez patienter…' : 'Réinitialiser mon accès'}</button>
       </form>
       <p class="switch-mode"><button type="button" class="text-button" data-action="show-login">Retour à la connexion</button></p>
@@ -115,7 +133,7 @@ function renderAuth(): string {
         <label for="email">Adresse e-mail</label>
         <input id="email" name="email" type="email" autocomplete="email" placeholder="vous@exemple.fr" required />
         <label for="master-password">Mot de passe maître</label>
-        <input id="master-password" name="password" type="password" autocomplete="${registering ? 'new-password' : 'current-password'}" placeholder="${registering ? '12 caractères minimum' : 'Votre mot de passe'}" ${registering ? 'minlength="12"' : ''} required />
+        <input id="master-password" data-no-draft name="password" type="password" autocomplete="${registering ? 'new-password' : 'current-password'}" placeholder="${registering ? '12 caractères minimum' : 'Votre mot de passe'}" ${registering ? 'minlength="12"' : ''} required />
         <button class="button button-primary" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'Veuillez patienter…' : registering ? 'Créer mon coffre' : 'Se connecter'}</button>
       </form>
       <p class="switch-mode">${registering ? 'Vous avez déjà un compte ?' : 'Nouveau ici ?'}
@@ -124,6 +142,23 @@ function renderAuth(): string {
       ${registering ? '' : '<p class="switch-mode"><button type="button" class="text-button" data-action="show-recover">Mot de passe oublié ?</button></p>'}
       <p class="privacy-note"><span class="lock-icon" aria-hidden="true">◆</span> Votre mot de passe maître reste dans votre navigateur.</p>
     </section>`;
+}
+
+function renderItemActions(item: VaultItem): string {
+  const id = escapeHtml(item.id);
+  if (confirmingDeleteId === item.id) {
+    return `
+      <div class="card-actions confirm">
+        <span>Supprimer définitivement ce secret, pour vous et pour les personnes avec qui il est partagé ?</span>
+        <button type="button" class="button button-danger" data-action="confirm-delete" data-id="${id}" ${busy ? 'disabled' : ''}>Supprimer</button>
+        <button type="button" class="button button-quiet" data-action="cancel-delete">Annuler</button>
+      </div>`;
+  }
+  return `
+    <div class="card-actions">
+      <button type="button" class="text-button" data-action="edit" data-id="${id}" ${busy ? 'disabled' : ''}>Modifier</button>
+      <button type="button" class="text-button danger" data-action="delete" data-id="${id}" ${busy ? 'disabled' : ''}>Supprimer</button>
+    </div>`;
 }
 
 function renderItem(item: VaultItem): string {
@@ -144,6 +179,7 @@ function renderItem(item: VaultItem): string {
         <div class="password-row"><dt>Mot de passe</dt><dd><input aria-label="Mot de passe de ${escapeHtml(item.name)}" data-password-for="${escapeHtml(item.id)}" type="password" readonly value="${escapeHtml(item.password)}" /><button type="button" class="text-button" data-action="reveal" data-id="${escapeHtml(item.id)}">Afficher</button></dd></div>
         ${item.notes ? `<div class="notes-row"><dt>Notes</dt><dd>${escapeHtml(item.notes)}</dd></div>` : ''}
       </dl>
+      ${ownItem ? renderItemActions(item) : ''}
       ${ownItem ? `
         <div class="share-area">
           <form class="share-form" data-share-id="${escapeHtml(item.id)}">
@@ -153,7 +189,7 @@ function renderItem(item: VaultItem): string {
           ${sharedUsers.length ? `
           <ul class="access-list" aria-label="Personnes ayant accès">
             ${sharedUsers.map((access) => `
-              <li><span>${escapeHtml(access.email)}</span><button type="button" class="text-button danger" data-action="revoke" data-item-id="${escapeHtml(item.id)}" data-user-id="${escapeHtml(access.userId)}" data-email="${escapeHtml(access.email)}" ${busy ? 'disabled' : ''}>Retirer l’accès</button></li>`).join('')}
+              <li><span class="access-who">${escapeHtml(access.email)}${access.publicKey && fingerprints.has(access.publicKey) ? `<code class="fingerprint" title="Empreinte de sa clé publique">${escapeHtml(fingerprints.get(access.publicKey) ?? '')}</code>` : ''}</span><button type="button" class="text-button danger" data-action="revoke" data-item-id="${escapeHtml(item.id)}" data-user-id="${escapeHtml(access.userId)}" data-email="${escapeHtml(access.email)}" ${busy ? 'disabled' : ''}>Retirer l’accès</button></li>`).join('')}
           </ul>` : '<p class="shared-list">Pas encore partagé</p>'}
         </div>` : ''}
     </article>`;
@@ -209,10 +245,14 @@ function renderSecurity(): string {
           ? 'Ce compte n’a pas encore de clé de secours : un mot de passe oublié rendrait le coffre illisible.'
           : 'Clé de secours perdue ou vue par quelqu’un ? Remplacez-la : l’ancienne cessera aussitôt de fonctionner.'}</p>
         <p>Renouveler vos clés remplace votre paire de clés de chiffrement, ré-enveloppe l’accès à chaque secret, ferme vos autres sessions et vous donne une nouvelle clé de secours.</p>
+        <p class="fingerprint-block">Empreinte de votre clé publique
+          <code class="fingerprint">${escapeHtml(fingerprints.get(session.publicKey) ?? '…')}</code>
+          <span>Pour vérifier un partage, comparez-la de vive voix avec celle que votre interlocuteur voit à côté de votre adresse.</span>
+        </p>
       </div>
       <form id="security-form" class="form-stack">
         <label for="security-password">Mot de passe maître</label>
-        <input id="security-password" name="password" type="password" autocomplete="current-password" required />
+        <input id="security-password" data-no-draft name="password" type="password" autocomplete="current-password" required />
         <button class="button button-secondary" type="submit" name="intent" value="recovery" ${busy ? 'disabled' : ''}>Générer une nouvelle clé de secours</button>
         <button class="button button-quiet" type="submit" name="intent" value="rotate" ${busy ? 'disabled' : ''}>Renouveler mes clés de chiffrement</button>
       </form>
@@ -221,26 +261,31 @@ function renderSecurity(): string {
 
 function renderVault(): string {
   if (!session) return renderAuth();
+  const editing = editingItemId ? (items.find((item) => item.id === editingItemId) ?? null) : null;
+  const prefill = (value: string | undefined) => (editing ? escapeHtml(value ?? '') : '');
   return `
     ${renderRecoveryKey()}
     <section class="vault-layout" aria-label="Coffre-fort">
       <div class="side-column">
-      <section class="panel create-panel" aria-labelledby="create-title">
+      <section class="panel create-panel ${editing ? 'is-editing' : ''}" aria-labelledby="create-title">
         <div class="section-heading">
-          <span class="eyebrow">Nouveau contenu</span>
-          <h2 id="create-title">Ajouter un secret</h2>
-          <p>Il est chiffré dans le navigateur avant son enregistrement.</p>
+          <span class="eyebrow">${editing ? 'Modification' : 'Nouveau contenu'}</span>
+          <h2 id="create-title">${editing ? 'Modifier le secret' : 'Ajouter un secret'}</h2>
+          <p>${editing
+            ? 'Il est rechiffré dans le navigateur ; les personnes qui y ont accès verront la nouvelle version.'
+            : 'Il est chiffré dans le navigateur avant son enregistrement.'}</p>
         </div>
         <form id="secret-form" class="form-stack">
           <label for="secret-name">Nom du secret</label>
-          <input id="secret-name" name="name" placeholder="Ex. Compte de démonstration" required />
+          <input id="secret-name" name="name" placeholder="Ex. Compte de démonstration" value="${prefill(editing?.name)}" required />
           <div class="two-columns">
-            <div><label for="secret-username">Identifiant</label><input id="secret-username" name="username" autocomplete="off" /></div>
-            <div><label for="secret-password">Mot de passe</label><input id="secret-password" name="password" type="password" autocomplete="new-password" /></div>
+            <div><label for="secret-username">Identifiant</label><input id="secret-username" name="username" autocomplete="off" value="${prefill(editing?.username)}" /></div>
+            <div><label for="secret-password">Mot de passe</label><input id="secret-password" name="password" type="password" autocomplete="new-password" value="${prefill(editing?.password)}" /></div>
           </div>
           <label for="secret-notes">Notes</label>
-          <textarea id="secret-notes" name="notes" rows="3" placeholder="Informations utiles (facultatif)"></textarea>
-          <button class="button button-primary" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'Enregistrement…' : 'Chiffrer et enregistrer'}</button>
+          <textarea id="secret-notes" name="notes" rows="3" placeholder="Informations utiles (facultatif)">${prefill(editing?.notes)}</textarea>
+          <button class="button button-primary" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'Enregistrement…' : editing ? 'Rechiffrer et enregistrer' : 'Chiffrer et enregistrer'}</button>
+          ${editing ? '<button class="button button-quiet" type="button" data-action="cancel-edit">Annuler la modification</button>' : ''}
         </form>
       </section>
       ${renderSecurity()}
@@ -253,7 +298,25 @@ function renderVault(): string {
     </section>`;
 }
 
+// render() rebuilds the whole page: without this, any notice (an error, a busy state)
+// would wipe what the user was typing. Master passwords are deliberately not kept.
+function captureDrafts(): Map<string, string> {
+  const drafts = new Map<string, string>();
+  for (const field of app.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input[id], textarea[id]')) {
+    if (!field.hasAttribute('data-no-draft') && field.value) drafts.set(field.id, field.value);
+  }
+  return drafts;
+}
+
+function restoreDrafts(drafts: Map<string, string>): void {
+  for (const [id, value] of drafts) {
+    const field = document.getElementById(id);
+    if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) field.value = value;
+  }
+}
+
 function render(): void {
+  const drafts = captureDrafts();
   app.innerHTML = `
     <div class="page-shell">
       <header class="topbar">
@@ -274,6 +337,7 @@ function render(): void {
       </main>
       <footer class="footer"><span>SafeShare</span><span>Vos données sont chiffrées avant leur envoi.</span><span>Démo pédagogique</span></footer>
     </div>`;
+  restoreDrafts(drafts);
 }
 
 async function loadItems(): Promise<void> {
@@ -285,6 +349,15 @@ async function loadItems(): Promise<void> {
   );
   accessByItem = new Map(accessEntries);
   auditEntries = await readAuditLog(session);
+  const keys = new Set([session.publicKey]);
+  for (const accesses of accessByItem.values()) {
+    for (const access of accesses) if (access.publicKey) keys.add(access.publicKey);
+  }
+  await Promise.all(
+    [...keys]
+      .filter((key) => !fingerprints.has(key))
+      .map(async (key) => fingerprints.set(key, await publicKeyFingerprint(key))),
+  );
 }
 
 async function refreshAfterChange(message: string): Promise<void> {
@@ -329,6 +402,41 @@ app.addEventListener('click', async (event) => {
     } catch (error) {
       busy = false;
       showError(error, 'Le retrait d’accès a échoué.');
+    }
+  } else if (action === 'edit' && button.dataset.id) {
+    clearDraft('#secret-form');
+    editingItemId = button.dataset.id;
+    confirmingDeleteId = null;
+    notice = '';
+    render();
+    app.querySelector<HTMLInputElement>('#secret-name')?.focus();
+  } else if (action === 'cancel-edit') {
+    clearDraft('#secret-form');
+    editingItemId = null;
+    render();
+  } else if (action === 'delete' && button.dataset.id) {
+    confirmingDeleteId = button.dataset.id;
+    notice = '';
+    render();
+  } else if (action === 'cancel-delete') {
+    confirmingDeleteId = null;
+    render();
+  } else if (action === 'confirm-delete' && button.dataset.id && session) {
+    const id = button.dataset.id;
+    busy = true;
+    render();
+    try {
+      await deleteVaultItem(id, session);
+      busy = false;
+      confirmingDeleteId = null;
+      if (editingItemId === id) {
+        clearDraft('#secret-form');
+        editingItemId = null;
+      }
+      await refreshAfterChange('Secret supprimé : plus personne n’y a accès.');
+    } catch (error) {
+      busy = false;
+      showError(error, 'La suppression a échoué.');
     }
   } else if (action === 'logout') {
     const current = session;
@@ -433,13 +541,17 @@ app.addEventListener('submit', async (event) => {
       password: String(data.get('password') ?? ''),
       notes: String(data.get('notes') ?? '').trim(),
     };
+    const editedId = editingItemId;
     busy = true;
     notice = '';
     render();
     try {
-      await createVaultItem(secret, session);
+      if (editedId) await updateVaultItem(editedId, secret, session);
+      else await createVaultItem(secret, session);
       busy = false;
-      await refreshAfterChange('Secret chiffré et enregistré.');
+      editingItemId = null;
+      clearDraft('#secret-form');
+      await refreshAfterChange(editedId ? 'Secret modifié et rechiffré.' : 'Secret chiffré et enregistré.');
     } catch (error) {
       busy = false;
       showError(error, 'Impossible d’enregistrer ce secret.');
@@ -453,6 +565,7 @@ app.addEventListener('submit', async (event) => {
     try {
       await shareVaultItem(itemId, email, session);
       busy = false;
+      clearDraft(`[data-share-id="${CSS.escape(itemId)}"]`);
       await refreshAfterChange(`Secret partagé avec ${email}.`);
     } catch (error) {
       busy = false;

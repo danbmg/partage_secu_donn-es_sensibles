@@ -14,7 +14,9 @@ function fixture() {
   databases.push(database);
   const app = createApp(database);
   for (const [id, email] of [['owner', 'owner@example.com'], ['other', 'other@example.com']]) {
-    database.prepare('INSERT INTO users (id, email, kdf_salt, auth_hash) VALUES (?, ?, ?, ?)').run(id, email, 'salt', 'hash');
+    database
+      .prepare('INSERT INTO users (id, email, kdf_salt, auth_hash, public_key) VALUES (?, ?, ?, ?, ?)')
+      .run(id, email, 'salt', 'hash', `${id}-public-key`);
   }
   database.prepare('INSERT INTO items (id, owner_id, ciphertext) VALUES (?, ?, ?)').run('item-1', 'owner', ciphertext);
   database.prepare('INSERT INTO item_keys (item_id, user_id, wrapped_key) VALUES (?, ?, ?)').run('item-1', 'owner', ownerWrappedKey);
@@ -31,7 +33,7 @@ describe('encrypted item sharing', () => {
     const response = await request(testApp)
       .post('/api/items/item-1/shares')
       .set('Authorization', `Bearer ${ownerToken}`)
-      .send({ email: 'other@example.com', wrappedKey: recipientWrappedKey });
+      .send({ email: 'other@example.com', wrappedKey: recipientWrappedKey, recipientPublicKey: 'other-public-key' });
 
     expect(response.status).toBe(201);
     expect(response.body).toEqual({ sharedWithUserId: 'other' });
@@ -48,16 +50,16 @@ describe('encrypted item sharing', () => {
   it('lists access for the owner and rejects duplicate shares or non-owner share attempts', async () => {
     const { app: testApp, database, ownerToken, otherToken } = fixture();
     const ownerList = await request(testApp).get('/api/items/item-1/shares').set('Authorization', `Bearer ${ownerToken}`);
-    expect(ownerList.body.users).toEqual([{ userId: 'owner', email: 'owner@example.com', publicKey: null, sharedAt: expect.any(String) }]);
+    expect(ownerList.body.users).toEqual([{ userId: 'owner', email: 'owner@example.com', publicKey: 'owner-public-key', sharedAt: expect.any(String) }]);
 
     const share = () => request(testApp).post('/api/items/item-1/shares')
       .set('Authorization', `Bearer ${ownerToken}`)
-      .send({ email: 'other@example.com', wrappedKey: recipientWrappedKey });
+      .send({ email: 'other@example.com', wrappedKey: recipientWrappedKey, recipientPublicKey: 'other-public-key' });
     expect((await share()).status).toBe(201);
     expect((await share()).status).toBe(409);
     expect(
       (await request(testApp).post('/api/items/item-1/shares').set('Authorization', `Bearer ${otherToken}`).send({
-        email: 'owner@example.com', wrappedKey: recipientWrappedKey,
+        email: 'owner@example.com', wrappedKey: recipientWrappedKey, recipientPublicKey: 'owner-public-key',
       })).status,
     ).toBe(404);
     expect((await request(testApp).get('/api/items/item-1/shares').set('Authorization', `Bearer ${otherToken}`)).status).toBe(404);
@@ -70,7 +72,18 @@ describe('encrypted item sharing', () => {
   it('rejects sharing with unknown users and malformed wrapped keys', async () => {
     const { app: testApp, ownerToken } = fixture();
     const url = '/api/items/item-1/shares';
-    expect((await request(testApp).post(url).set('Authorization', `Bearer ${ownerToken}`).send({ email: 'nobody@example.com', wrappedKey: recipientWrappedKey })).status).toBe(404);
-    expect((await request(testApp).post(url).set('Authorization', `Bearer ${ownerToken}`).send({ email: 'other@example.com', wrappedKey: 'plain secret' })).status).toBe(400);
+    expect((await request(testApp).post(url).set('Authorization', `Bearer ${ownerToken}`).send({ email: 'nobody@example.com', wrappedKey: recipientWrappedKey, recipientPublicKey: 'x' })).status).toBe(404);
+    expect((await request(testApp).post(url).set('Authorization', `Bearer ${ownerToken}`).send({ email: 'other@example.com', wrappedKey: 'plain secret', recipientPublicKey: 'other-public-key' })).status).toBe(400);
+    expect((await request(testApp).post(url).set('Authorization', `Bearer ${ownerToken}`).send({ email: 'other@example.com', wrappedKey: recipientWrappedKey })).status).toBe(400);
+  });
+
+  it('refuses a key wrapped for a public key the recipient no longer has', async () => {
+    const { app: testApp, database, ownerToken } = fixture();
+    const response = await request(testApp)
+      .post('/api/items/item-1/shares')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ email: 'other@example.com', wrappedKey: recipientWrappedKey, recipientPublicKey: 'key-before-rotation' });
+    expect(response.status).toBe(409);
+    expect(database.prepare("SELECT user_id FROM item_keys WHERE user_id = 'other'").all()).toEqual([]);
   });
 });

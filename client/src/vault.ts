@@ -68,27 +68,22 @@ export async function readVaultItems(session: AuthenticatedSession): Promise<Vau
   return Promise.all(items.map((item) => decryptItem(item, session)));
 }
 
+// Re-encrypts the new content with the item's existing key (fresh IV): everyone who
+// already has access keeps it, nobody new gets it.
 export async function updateVaultItem(
   id: string,
   secret: VaultSecret,
   session: AuthenticatedSession,
 ): Promise<void> {
-  const item = (await readVaultItems(session)).find((entry) => entry.id === id);
-  if (!item) throw new Error('Item not found');
-  if (item.ownerId !== session.userId) throw new Error('Only the owner can update this item');
-  const existing = await api<EncryptedItem>(`/api/items/${encodeURIComponent(id)}`, session);
-  const rawItemKey = await unwrapItemKey(existing.wrappedKey, session.privateKey);
-  const key = await importAesKey(rawItemKey);
+  const path = `/api/items/${encodeURIComponent(id)}`;
+  const existing = await api<EncryptedItem>(path, session);
+  if (existing.ownerId !== session.userId) throw new Error('Only the owner can update this item');
+  const key = await importAesKey(await unwrapItemKey(existing.wrappedKey, session.privateKey));
   const ciphertext = await encryptText(JSON.stringify(secret), key);
-  await api(`/api/items/${encodeURIComponent(id)}`, session, {
-    method: 'PUT',
-    body: { ciphertext },
-  });
+  await api(path, session, { method: 'PUT', body: { ciphertext } });
 }
 
+// The server checks ownership and deletes the item with every wrapped key (cascade).
 export async function deleteVaultItem(id: string, session: AuthenticatedSession): Promise<void> {
-  const item = (await readVaultItems(session)).find((entry) => entry.id === id);
-  if (!item) throw new Error('Item not found');
-  if (item.ownerId !== session.userId) throw new Error('Only the owner can delete this item');
   await api(`/api/items/${encodeURIComponent(id)}`, session, { method: 'DELETE' });
 }

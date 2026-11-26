@@ -6,6 +6,7 @@ import {
   encryptText,
   generateRsaKeyPair,
   importRsaPrivateKey,
+  keyPairMatches,
 } from './crypto/index.js';
 import { apiRequest } from './http.js';
 import { createRecoveryMaterial } from './recovery.js';
@@ -72,6 +73,7 @@ export async function loginAccount(email: string, masterPassword: string): Promi
   const encryptionKey = await deriveEncryptionKey(masterPassword, salt);
   const privateKeyBase64 = await decryptText(result.encryptedPrivateKey, encryptionKey);
   const privateKey = await importRsaPrivateKey(privateKeyBase64);
+  if (!(await keyPairMatches(result.publicKey, privateKey))) throw new Error('Public key does not match private key');
   return {
     token: result.token,
     userId: result.userId,

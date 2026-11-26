@@ -36,7 +36,8 @@ export async function shareVaultItem(
   await apiRequest<{ sharedWithUserId: string }>(`/api/items/${encodeURIComponent(itemId)}/shares`, {
     method: 'POST',
     token: session.token,
-    body: { email: recipientEmail, wrappedKey },
+    // Lets the server refuse the share if the recipient changed keys in the meantime.
+    body: { email: recipientEmail, wrappedKey, recipientPublicKey: publicKey },
   });
 }
 
@@ -71,7 +72,7 @@ export async function revokeVaultItemAccess(
         // For myself, trust the key I hold rather than the copy the server returns.
         const publicKey = access.userId === session.userId ? session.publicKey : access.publicKey;
         if (!publicKey) throw new Error('Missing public key for a remaining recipient');
-        return { userId: access.userId, wrappedKey: await wrapItemKey(newRawKey, publicKey) };
+        return { userId: access.userId, publicKey, wrappedKey: await wrapItemKey(newRawKey, publicKey) };
       }),
   );
   await apiRequest<void>(`${path}/shares/${encodeURIComponent(revokedUserId)}`, {

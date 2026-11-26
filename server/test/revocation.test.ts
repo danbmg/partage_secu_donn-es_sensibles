@@ -46,7 +46,7 @@ describe('revoking a share', () => {
     const response = await request(app)
       .delete('/api/items/item-1/shares/bob')
       .set(auth('owner'))
-      .send({ ciphertext: envelope(9), wrappedKeys: [{ userId: 'owner', wrappedKey: wrapped(10) }, { userId: 'carol', wrappedKey: wrapped(11) }] });
+      .send({ ciphertext: envelope(9), wrappedKeys: [{ userId: 'owner', publicKey: 'owner-public-key', wrappedKey: wrapped(10) }, { userId: 'carol', publicKey: 'carol-public-key', wrappedKey: wrapped(11) }] });
 
     expect(response.status).toBe(204);
     expect((await request(app).get('/api/items/item-1').set(auth('bob'))).status).toBe(404);
@@ -68,9 +68,9 @@ describe('revoking a share', () => {
   it('refuses a new key set that forgets a holder or still includes the revoked user, and changes nothing', async () => {
     const { app, database, auth } = fixture();
     const url = '/api/items/item-1/shares/bob';
-    const forgetsCarol = [{ userId: 'owner', wrappedKey: wrapped(10) }];
-    const keepsBob = [...forgetsCarol, { userId: 'carol', wrappedKey: wrapped(11) }, { userId: 'bob', wrappedKey: wrapped(12) }];
-    const addsDave = [...forgetsCarol, { userId: 'dave', wrappedKey: wrapped(13) }];
+    const forgetsCarol = [{ userId: 'owner', publicKey: 'owner-public-key', wrappedKey: wrapped(10) }];
+    const keepsBob = [...forgetsCarol, { userId: 'carol', publicKey: 'carol-public-key', wrappedKey: wrapped(11) }, { userId: 'bob', publicKey: 'bob-public-key', wrappedKey: wrapped(12) }];
+    const addsDave = [...forgetsCarol, { userId: 'dave', publicKey: 'dave-public-key', wrappedKey: wrapped(13) }];
 
     for (const wrappedKeys of [forgetsCarol, keepsBob, addsDave]) {
       expect((await request(app).delete(url).set(auth('owner')).send({ ciphertext: envelope(9), wrappedKeys })).status).toBe(409);
@@ -79,9 +79,25 @@ describe('revoking a share', () => {
     expect(database.prepare('SELECT ciphertext FROM items').get()).toEqual({ ciphertext: envelope(1) });
   });
 
+  it('refuses a new key wrapped for a public key a remaining holder no longer has', async () => {
+    const { app, database, auth } = fixture();
+    const response = await request(app)
+      .delete('/api/items/item-1/shares/bob')
+      .set(auth('owner'))
+      .send({
+        ciphertext: envelope(9),
+        wrappedKeys: [
+          { userId: 'owner', publicKey: 'owner-public-key', wrappedKey: wrapped(10) },
+          { userId: 'carol', publicKey: 'carol-key-before-rotation', wrappedKey: wrapped(11) },
+        ],
+      });
+    expect(response.status).toBe(409);
+    expect(database.prepare('SELECT COUNT(*) AS count FROM item_keys').get()).toEqual({ count: 3 });
+  });
+
   it('only lets the owner revoke, never their own access, and validates the payload', async () => {
     const { app, auth } = fixture();
-    const body = { ciphertext: envelope(9), wrappedKeys: [{ userId: 'owner', wrappedKey: wrapped(10) }, { userId: 'bob', wrappedKey: wrapped(11) }] };
+    const body = { ciphertext: envelope(9), wrappedKeys: [{ userId: 'owner', publicKey: 'owner-public-key', wrappedKey: wrapped(10) }, { userId: 'bob', publicKey: 'bob-public-key', wrappedKey: wrapped(11) }] };
 
     expect((await request(app).delete('/api/items/item-1/shares/carol').send(body)).status).toBe(401);
     expect((await request(app).delete('/api/items/item-1/shares/carol').set(auth('bob')).send(body)).status).toBe(404);
@@ -91,7 +107,7 @@ describe('revoking a share', () => {
     expect(
       (await request(app).delete('/api/items/item-1/shares/carol').set(auth('owner')).send({
         ...body,
-        wrappedKeys: [{ userId: 'owner', wrappedKey: wrapped(10) }, { userId: 'owner', wrappedKey: wrapped(10) }],
+        wrappedKeys: [{ userId: 'owner', publicKey: 'owner-public-key', wrappedKey: wrapped(10) }, { userId: 'owner', publicKey: 'owner-public-key', wrappedKey: wrapped(10) }],
       })).status,
     ).toBe(400);
   });
