@@ -33,10 +33,11 @@ npm run build
 2. `loginAccount()` récupère le sel public, prouve le mot de passe avec le dérivé et déchiffre la clé privée uniquement en mémoire côté client.
 3. `createVaultItem()` chiffre le contenu avec une clé AES-256-GCM unique, puis enveloppe cette clé avec la clé publique du propriétaire.
 4. `shareVaultItem()` enveloppe la même clé d'élément avec la clé publique du destinataire. Le destinataire peut alors lire le ciphertext avec sa clé privée.
-5. `logoutAccount()` demande au serveur d'oublier la session : le jeton devient inutilisable immédiatement, même s'il a été copié. Si une requête renvoie 401 alors que l'utilisateur est connecté (session fermée ailleurs ou expirée), l'interface revient à l'écran de connexion.
-6. `recoverAccount()` (mot de passe oublié) : la clé de secours prouve l'identité (`/api/recovery/key`), déchiffre la clé privée dans le navigateur, qui la rechiffre sous le nouveau mot de passe. La réinitialisation (`/api/recovery/reset`) remplace aussi la clé de secours utilisée par une nouvelle et ferme toutes les sessions du compte.
-7. `regenerateRecoveryKey()` remplace la clé de secours d'un utilisateur connecté (clé perdue, ou compte créé avant la récupération). Le serveur exige en plus de la session la preuve du mot de passe maître : un jeton volé ne suffit pas à poser sa propre clé de secours.
-8. `readAuditLog()` récupère le journal d'activité : les actions de l'utilisateur et toute action d'un tiers sur un élément dont il est propriétaire (lecture, partage). Le serveur ne connaît que des identifiants d'éléments ; le navigateur les remplace par les noms déchiffrés.
+5. `revokeVaultItemAccess()` retire l'accès d'un destinataire. Supprimer sa clé enveloppée ne suffit pas (il a pu garder la clé de l'élément) : le navigateur du propriétaire déchiffre l'élément, le rechiffre avec une **nouvelle** clé AES et l'enveloppe pour chaque accès restant. Le serveur applique le tout dans une transaction et refuse (409) un jeu de clés qui oublierait un détenteur ou en ajouterait un.
+6. `logoutAccount()` demande au serveur d'oublier la session : le jeton devient inutilisable immédiatement, même s'il a été copié. Si une requête renvoie 401 alors que l'utilisateur est connecté (session fermée ailleurs ou expirée), l'interface revient à l'écran de connexion.
+7. `recoverAccount()` (mot de passe oublié) : la clé de secours prouve l'identité (`/api/recovery/key`), déchiffre la clé privée dans le navigateur, qui la rechiffre sous le nouveau mot de passe. La réinitialisation (`/api/recovery/reset`) remplace aussi la clé de secours utilisée par une nouvelle et ferme toutes les sessions du compte.
+8. `regenerateRecoveryKey()` remplace la clé de secours d'un utilisateur connecté (clé perdue, ou compte créé avant la récupération). Le serveur exige en plus de la session la preuve du mot de passe maître : un jeton volé ne suffit pas à poser sa propre clé de secours.
+9. `readAuditLog()` récupère le journal d'activité : les actions de l'utilisateur et toute action d'un tiers sur un élément dont il est propriétaire (lecture, partage). Le serveur ne connaît que des identifiants d'éléments ; le navigateur les remplace par les noms déchiffrés.
 
 ## Routes de l'API
 
@@ -54,7 +55,8 @@ npm run build
 | GET | `/api/items` | oui | éléments accessibles (ciphertext + clé enveloppée pour l'appelant) |
 | POST | `/api/items` | oui | création d'un élément chiffré |
 | GET/PUT/DELETE | `/api/items/:id` | oui | lecture, remplacement du ciphertext, suppression (propriétaire) |
-| GET/POST | `/api/items/:id/shares` | oui | liste des accès, partage (propriétaire) |
+| GET/POST | `/api/items/:id/shares` | oui | liste des accès (avec clés publiques), partage (propriétaire) |
+| DELETE | `/api/items/:id/shares/:userId` | oui | révocation + nouveau ciphertext et nouvelles clés enveloppées (propriétaire) |
 | GET | `/api/audit` | oui | 100 dernières entrées du journal visibles par l'appelant |
 
 ## Base de données
@@ -71,4 +73,8 @@ La clé de secours fait 160 bits aléatoires, affichés en 8 groupes de 4 caract
 
 Limite assumée : si l'utilisateur perd à la fois son mot de passe maître et sa clé de secours, ses données sont perdues. C'est le prix du modèle zero-knowledge.
 
-Les interfaces de révocation et de rotation de clés restent à réaliser dans les tâches suivantes.
+## Révocation : ce qu'elle garantit, et ce qu'elle ne peut pas garantir
+
+Après révocation, l'ancien destinataire ne reçoit plus l'élément, et une clé qu'il aurait conservée ne déchiffre plus la version actuelle. En revanche, ce qu'il a déjà lu ou copié avant la révocation reste en sa possession : aucun système ne peut effacer un secret déjà vu. Un mot de passe partagé puis révoqué doit donc aussi être changé à la source.
+
+La rotation des clés de compte reste à réaliser dans la tâche suivante.
