@@ -1,5 +1,12 @@
 import type { AuthenticatedSession } from './auth.js';
-import { unwrapItemKey, wrapItemKey } from './crypto/index.js';
+import {
+  createRandomItemKey,
+  decryptText,
+  encryptText,
+  importAesKey,
+  unwrapItemKey,
+  wrapItemKey,
+} from './crypto/index.js';
 import { apiRequest } from './http.js';
 
 interface SharedItem {
@@ -11,6 +18,7 @@ interface SharedItem {
 export interface ItemAccess {
   userId: string;
   email: string;
+  publicKey: string | null;
   sharedAt: string;
 }
 
@@ -37,4 +45,38 @@ export async function listItemAccess(itemId: string, session: AuthenticatedSessi
     token: session.token,
   });
   return users;
+}
+
+// Removing the recipient's wrapped key is not enough: they may have kept the item key.
+// So the item is re-encrypted under a brand-new key, wrapped only for those who keep access.
+export async function revokeVaultItemAccess(
+  itemId: string,
+  revokedUserId: string,
+  session: AuthenticatedSession,
+): Promise<void> {
+  const path = `/api/items/${encodeURIComponent(itemId)}`;
+  const item = await apiRequest<SharedItem>(path, { token: session.token });
+  const accesses = await listItemAccess(itemId, session);
+  if (!accesses.some((access) => access.userId === revokedUserId)) throw new Error('This user has no access to the item');
+
+  const oldKey = await importAesKey(await unwrapItemKey(item.wrappedKey, session.privateKey));
+  const plaintext = await decryptText(item.ciphertext, oldKey);
+  const newRawKey = await createRandomItemKey();
+  const ciphertext = await encryptText(plaintext, await importAesKey(newRawKey));
+
+  const wrappedKeys = await Promise.all(
+    accesses
+      .filter((access) => access.userId !== revokedUserId)
+      .map(async (access) => {
+        // For myself, trust the key I hold rather than the copy the server returns.
+        const publicKey = access.userId === session.userId ? session.publicKey : access.publicKey;
+        if (!publicKey) throw new Error('Missing public key for a remaining recipient');
+        return { userId: access.userId, wrappedKey: await wrapItemKey(newRawKey, publicKey) };
+      }),
+  );
+  await apiRequest<void>(`${path}/shares/${encodeURIComponent(revokedUserId)}`, {
+    method: 'DELETE',
+    token: session.token,
+    body: { ciphertext, wrappedKeys },
+  });
 }
