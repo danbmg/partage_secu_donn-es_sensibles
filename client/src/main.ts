@@ -3,8 +3,9 @@ import { loginAccount, registerAccount, type AuthenticatedSession } from './auth
 import { shareVaultItem, listItemAccess, type ItemAccess } from './sharing.js';
 import { createVaultItem, readVaultItems, type VaultItem } from './vault.js';
 
-const app = document.querySelector<HTMLDivElement>('#app');
-if (!app) throw new Error('Application root was not found');
+const root = document.querySelector<HTMLDivElement>('#app');
+if (!root) throw new Error('Application root was not found');
+const app: HTMLDivElement = root;
 
 let session: AuthenticatedSession | null = null;
 let accountEmail = '';
