@@ -60,6 +60,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   'Invalid email or recovery key': 'Adresse e-mail ou clé de secours incorrecte.',
   'Invalid recovery key': 'Clé de secours mal saisie : 32 caractères, lettres A à Z et chiffres 2 à 7.',
   'Invalid master password': 'Mot de passe maître incorrect.',
+  'Too many failed attempts, try again later': 'Trop de tentatives échouées : réessayez dans quelques minutes.',
   'Recipient not found': 'Aucun compte ne correspond à ce destinataire.',
   'Item is already shared with this user': 'Ce secret est déjà partagé avec cette personne.',
   'Cannot share an item with yourself': 'Vous avez déjà accès à ce secret.',

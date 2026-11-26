@@ -5,6 +5,7 @@ import { recordAudit } from '../audit.js';
 import { requestSession } from '../auth/require-session.js';
 import { createSession, revokeSession } from '../auth/session.js';
 import { hashAuthenticationProof, verifyAuthenticationProof } from '../auth/password-proof.js';
+import { rejectIfLimited, type FailureLimiter } from '../auth/rate-limit.js';
 import { containsClientSecret, normalizeEmail, objectBody, validBase64, validEncryptedKey } from '../validation.js';
 
 interface AccountRow {
@@ -16,7 +17,7 @@ interface AccountRow {
   recovery_auth_hash: string | null;
 }
 
-export function authRoutes(database: Database.Database): Router {
+export function authRoutes(database: Database.Database, limiter: FailureLimiter): Router {
   const router = Router();
 
   router.get('/auth/salt', (request: Request, response: Response) => {
@@ -114,6 +115,8 @@ export function authRoutes(database: Database.Database): Router {
       response.status(400).json({ error: 'Passwords must never be sent to the server' });
       return;
     }
+    const attemptKey = `login:${request.ip}|${email}`;
+    if (rejectIfLimited(limiter, attemptKey, response)) return;
 
     const account = database
       .prepare(
@@ -121,9 +124,11 @@ export function authRoutes(database: Database.Database): Router {
       )
       .get(email) as AccountRow | undefined;
     if (!account || !verifyAuthenticationProof(authHash, account.auth_hash)) {
+      limiter.recordFailure(attemptKey);
       response.status(401).json({ error: 'Invalid email or authentication proof' });
       return;
     }
+    limiter.reset(attemptKey);
 
     recordAudit(database, { userId: account.id, action: 'login' });
     response.status(200).json({

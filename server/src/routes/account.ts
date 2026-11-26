@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import type Database from 'better-sqlite3';
 import { recordAudit } from '../audit.js';
 import { hashAuthenticationProof, verifyAuthenticationProof } from '../auth/password-proof.js';
+import { rejectIfLimited, type FailureLimiter } from '../auth/rate-limit.js';
 import { requestSession, requestUserId } from '../auth/require-session.js';
 import { revokeUserSessions } from '../auth/session.js';
 import {
@@ -36,7 +37,7 @@ interface RecoveryRow {
   recovery_encrypted_private_key: string | null;
 }
 
-export function accountRoutes(database: Database.Database): Router {
+export function accountRoutes(database: Database.Database, limiter: FailureLimiter): Router {
   const router = Router();
 
   // Same answer for an unknown email, an account without recovery key and a wrong proof.
@@ -62,8 +63,11 @@ export function accountRoutes(database: Database.Database): Router {
       response.status(400).json({ error: 'Invalid recovery data' });
       return;
     }
+    const attemptKey = `recovery:${request.ip}|${email}`;
+    if (rejectIfLimited(limiter, attemptKey, response)) return;
     const account = findRecoverableAccount(email, recoveryAuthHash);
     if (!account) {
+      limiter.recordFailure(attemptKey);
       response.status(401).json({ error: 'Invalid email or recovery key' });
       return;
     }
@@ -92,11 +96,15 @@ export function accountRoutes(database: Database.Database): Router {
       response.status(400).json({ error: 'Invalid recovery data' });
       return;
     }
+    const attemptKey = `recovery:${request.ip}|${email}`;
+    if (rejectIfLimited(limiter, attemptKey, response)) return;
     const account = findRecoverableAccount(email, recoveryAuthHash);
     if (!account) {
+      limiter.recordFailure(attemptKey);
       response.status(401).json({ error: 'Invalid email or recovery key' });
       return;
     }
+    limiter.reset(attemptKey);
 
     const reset = database.transaction(() => {
       database
@@ -139,14 +147,19 @@ export function accountRoutes(database: Database.Database): Router {
       response.status(400).json({ error: 'Invalid recovery data' });
       return;
     }
+    // A stolen session must not become a way to brute-force the master password.
+    const attemptKey = `password:${userId}`;
+    if (rejectIfLimited(limiter, attemptKey, response)) return;
     const account = database.prepare('SELECT auth_hash FROM users WHERE id = ?').get(userId) as
       | { auth_hash: string }
       | undefined;
     // 403, not 401: the session is valid, only the password proof is wrong.
     if (!account || !verifyAuthenticationProof(authHash, account.auth_hash)) {
+      limiter.recordFailure(attemptKey);
       response.status(403).json({ error: 'Invalid master password' });
       return;
     }
+    limiter.reset(attemptKey);
 
     const update = database.transaction(() => {
       database
@@ -186,13 +199,17 @@ export function accountRoutes(database: Database.Database): Router {
       return;
     }
     const { userId, sessionId } = session;
+    const attemptKey = `password:${userId}`;
+    if (rejectIfLimited(limiter, attemptKey, response)) return;
     const account = database.prepare('SELECT auth_hash FROM users WHERE id = ?').get(userId) as
       | { auth_hash: string }
       | undefined;
     if (!account || !verifyAuthenticationProof(authHash, account.auth_hash)) {
+      limiter.recordFailure(attemptKey);
       response.status(403).json({ error: 'Invalid master password' });
       return;
     }
+    limiter.reset(attemptKey);
 
     const rotate = database.transaction(() => {
       // Every item key the user holds must come back re-wrapped, or that item
