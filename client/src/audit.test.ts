@@ -43,6 +43,10 @@ describe('audit log in the browser', () => {
       actor: 'bob@example.com',
     });
     expect(describeAuditEntry(entry({ action: 'delete', itemId: null }), 'me', names).detail).toBe('élément supprimé');
+    expect(describeAuditEntry(entry({ action: 'revoke', targetEmail: 'bob@example.com' }), 'me', names)).toMatchObject({
+      label: 'Retrait d’accès',
+      detail: '« Wi-Fi » pour bob@example.com',
+    });
     expect(describeAuditEntry(entry({ action: 'login', itemId: null }), 'me', names).detail).toBe('');
     expect(describeAuditEntry(entry({ action: 'logout', itemId: null }), 'me', names)).toEqual({ label: 'Déconnexion', detail: '', actor: 'vous' });
   });

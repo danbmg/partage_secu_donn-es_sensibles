@@ -48,7 +48,7 @@ describe('encrypted item sharing', () => {
   it('lists access for the owner and rejects duplicate shares or non-owner share attempts', async () => {
     const { app: testApp, database, ownerToken, otherToken } = fixture();
     const ownerList = await request(testApp).get('/api/items/item-1/shares').set('Authorization', `Bearer ${ownerToken}`);
-    expect(ownerList.body.users).toEqual([{ userId: 'owner', email: 'owner@example.com', sharedAt: expect.any(String) }]);
+    expect(ownerList.body.users).toEqual([{ userId: 'owner', email: 'owner@example.com', publicKey: null, sharedAt: expect.any(String) }]);
 
     const share = () => request(testApp).post('/api/items/item-1/shares')
       .set('Authorization', `Bearer ${ownerToken}`)
