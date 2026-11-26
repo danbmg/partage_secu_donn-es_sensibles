@@ -49,5 +49,10 @@ describe('audit log in the browser', () => {
     });
     expect(describeAuditEntry(entry({ action: 'login', itemId: null }), 'me', names).detail).toBe('');
     expect(describeAuditEntry(entry({ action: 'logout', itemId: null }), 'me', names)).toEqual({ label: 'Déconnexion', detail: '', actor: 'vous' });
+    expect(describeAuditEntry(entry({ action: 'rotate-keys', itemId: null }), 'me', names)).toEqual({
+      label: 'Renouvellement des clés',
+      detail: '',
+      actor: 'vous',
+    });
   });
 });
