@@ -62,7 +62,11 @@ describe('encrypted vault items', () => {
     const ownList = await request(testApp).get('/api/items').set('Authorization', `Bearer ${ownerToken}`);
     expect(ownList.body.items[0]).toMatchObject({ id, ciphertext, wrappedKey, ownerId: 'owner' });
     expect((await request(testApp).get(`/api/items/${id}`).set('Authorization', `Bearer ${ownerToken}`)).body.ciphertext).toBe(ciphertext);
-    expect(database.prepare('SELECT action FROM audit_log WHERE action = ?').all('read')).toHaveLength(3);
+    // One read per item actually returned: the empty list of "other" logs nothing.
+    expect(database.prepare('SELECT user_id, item_id FROM audit_log WHERE action = ?').all('read')).toEqual([
+      { user_id: 'owner', item_id: id },
+      { user_id: 'owner', item_id: id },
+    ]);
   });
 
   it('allows the owner to replace ciphertext and prevents others from editing or deleting', async () => {
