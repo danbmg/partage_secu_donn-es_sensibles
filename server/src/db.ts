@@ -73,6 +73,11 @@ const migrations: string[] = [
   );
   CREATE INDEX idx_sessions_user ON sessions(user_id);
   `,
+  // 3. Account recovery: proof derived from the recovery key, re-hashed like the
+  //    password proof. Accounts created before this migration have none (NULL).
+  `
+  ALTER TABLE users ADD COLUMN recovery_auth_hash TEXT;
+  `,
 ];
 
 export const schemaVersion = migrations.length;

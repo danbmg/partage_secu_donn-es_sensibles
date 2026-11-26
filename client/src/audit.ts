@@ -1,7 +1,16 @@
 import type { AuthenticatedSession } from './auth.js';
 import { apiRequest } from './http.js';
 
-export type AuditAction = 'login' | 'logout' | 'create' | 'read' | 'update' | 'delete' | 'share';
+export type AuditAction =
+  | 'login'
+  | 'logout'
+  | 'recover'
+  | 'recovery-update'
+  | 'create'
+  | 'read'
+  | 'update'
+  | 'delete'
+  | 'share';
 
 export interface AuditEntry {
   id: number;
@@ -20,11 +29,13 @@ export interface AuditLine {
 }
 
 // Actions about the account itself: they never point to an item.
-const ACCOUNT_ACTIONS: ReadonlySet<AuditAction> = new Set<AuditAction>(['login', 'logout']);
+const ACCOUNT_ACTIONS: ReadonlySet<AuditAction> = new Set<AuditAction>(['login', 'logout', 'recover', 'recovery-update']);
 
 const ACTION_LABELS: Record<AuditAction, string> = {
   login: 'Connexion',
   logout: 'Déconnexion',
+  recover: 'Récupération du compte',
+  'recovery-update': 'Nouvelle clé de secours',
   create: 'Création',
   read: 'Lecture',
   update: 'Modification',

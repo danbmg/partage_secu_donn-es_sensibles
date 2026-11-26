@@ -1,6 +1,16 @@
 import type Database from 'better-sqlite3';
 
-export const AUDIT_ACTIONS = ['login', 'logout', 'create', 'read', 'update', 'delete', 'share'] as const;
+export const AUDIT_ACTIONS = [
+  'login',
+  'logout',
+  'recover',
+  'recovery-update',
+  'create',
+  'read',
+  'update',
+  'delete',
+  'share',
+] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
 interface AuditEvent {

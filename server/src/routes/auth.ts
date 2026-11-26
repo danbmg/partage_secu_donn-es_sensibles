@@ -5,6 +5,7 @@ import { recordAudit } from '../audit.js';
 import { requestSession } from '../auth/require-session.js';
 import { createSession, revokeSession } from '../auth/session.js';
 import { hashAuthenticationProof, verifyAuthenticationProof } from '../auth/password-proof.js';
+import { containsClientSecret, normalizeEmail, objectBody, validBase64, validEncryptedKey } from '../validation.js';
 
 interface AccountRow {
   id: string;
@@ -12,18 +13,7 @@ interface AccountRow {
   auth_hash: string;
   public_key: string;
   encrypted_private_key: string;
-}
-
-function validBase64(value: unknown, byteLength: number): value is string {
-  if (typeof value !== 'string') return false;
-  const decoded = Buffer.from(value, 'base64');
-  return (byteLength < 0 ? decoded.length > 0 : decoded.length === byteLength) && decoded.toString('base64') === value;
-}
-
-function normalizeEmail(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const email = value.trim().toLowerCase();
-  return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
+  recovery_auth_hash: string | null;
 }
 
 export function authRoutes(database: Database.Database): Router {
@@ -62,23 +52,23 @@ export function authRoutes(database: Database.Database): Router {
   });
 
   router.post('/register', (request: Request, response: Response) => {
-    const email = normalizeEmail(request.body?.email);
-    const body =
-      typeof request.body === 'object' && request.body !== null && !Array.isArray(request.body) ? request.body : {};
-    const { salt, authHash, publicKey, encryptedPrivateKey } = body;
+    const body = objectBody(request);
+    const email = normalizeEmail(body.email);
+    const { salt, authHash, publicKey, encryptedPrivateKey, recoveryAuthHash, recoveryEncryptedPrivateKey } = body;
     if (
       !email ||
       !validBase64(salt, 16) ||
       !validBase64(authHash, 32) ||
       !validBase64(publicKey, -1) ||
       Buffer.from(publicKey, 'base64').length < 200 ||
-      typeof encryptedPrivateKey !== 'string' ||
-      encryptedPrivateKey.length > 30_000
+      !validEncryptedKey(encryptedPrivateKey) ||
+      !validBase64(recoveryAuthHash, 32) ||
+      !validEncryptedKey(recoveryEncryptedPrivateKey)
     ) {
       response.status(400).json({ error: 'Invalid registration data' });
       return;
     }
-    if ('password' in body || 'masterPassword' in body) {
+    if (containsClientSecret(body)) {
       response.status(400).json({ error: 'Passwords must never be sent to the server' });
       return;
     }
@@ -87,9 +77,20 @@ export function authRoutes(database: Database.Database): Router {
     try {
       database
         .prepare(
-          'INSERT INTO users (id, email, kdf_salt, auth_hash, public_key, encrypted_private_key) VALUES (?, ?, ?, ?, ?, ?)',
+          `INSERT INTO users (id, email, kdf_salt, auth_hash, public_key, encrypted_private_key,
+                              recovery_auth_hash, recovery_encrypted_private_key)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(id, email, salt, hashAuthenticationProof(authHash), publicKey, encryptedPrivateKey);
+        .run(
+          id,
+          email,
+          salt,
+          hashAuthenticationProof(authHash),
+          publicKey,
+          encryptedPrivateKey,
+          hashAuthenticationProof(recoveryAuthHash),
+          recoveryEncryptedPrivateKey,
+        );
     } catch (error) {
       if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
         response.status(409).json({ error: 'Account already exists' });
@@ -102,21 +103,22 @@ export function authRoutes(database: Database.Database): Router {
   });
 
   router.post('/login', (request: Request, response: Response) => {
-    const email = normalizeEmail(request.body?.email);
-    const body =
-      typeof request.body === 'object' && request.body !== null && !Array.isArray(request.body) ? request.body : {};
+    const body = objectBody(request);
+    const email = normalizeEmail(body.email);
     const { authHash } = body;
     if (!email || !validBase64(authHash, 32)) {
       response.status(400).json({ error: 'Invalid login data' });
       return;
     }
-    if ('password' in body || 'masterPassword' in body) {
+    if (containsClientSecret(body)) {
       response.status(400).json({ error: 'Passwords must never be sent to the server' });
       return;
     }
 
     const account = database
-      .prepare('SELECT id, email, auth_hash, public_key, encrypted_private_key FROM users WHERE email = ?')
+      .prepare(
+        'SELECT id, email, auth_hash, public_key, encrypted_private_key, recovery_auth_hash FROM users WHERE email = ?',
+      )
       .get(email) as AccountRow | undefined;
     if (!account || !verifyAuthenticationProof(authHash, account.auth_hash)) {
       response.status(401).json({ error: 'Invalid email or authentication proof' });
@@ -129,6 +131,7 @@ export function authRoutes(database: Database.Database): Router {
       userId: account.id,
       publicKey: account.public_key,
       encryptedPrivateKey: account.encrypted_private_key,
+      hasRecoveryKey: account.recovery_auth_hash !== null,
     });
   });
 
